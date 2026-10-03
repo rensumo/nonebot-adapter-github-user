@@ -1,0 +1,153 @@
+name: Build Python Packages
+
+# 每次 push（任意分支 / 任意 tag）都自动打包；也可以在 Actions 页面手动触发
+on:
+  push:
+  workflow_dispatch:
+
+# 同一分支连续 push 时，取消上一次未跑完的任务
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: 查找可打包项目
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+      has_packages: ${{ steps.find.outputs.has_packages }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: find
+        name: 扫描包含 pyproject.toml 的目录
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          packages = []
+          for path in sorted(pathlib.Path(".").rglob("pyproject.toml")):
+              if ".git" in path.parts:
+                  continue
+              directory = path.parent.as_posix()
+              # 仓库根目录本身就是包时（dir 为 "."），用仓库名当产物名
+              name = (
+                  directory.replace("/", "-")
+                  if directory != "."
+                  else pathlib.Path(".").resolve().name
+              )
+              packages.append({"name": name, "dir": directory})
+          outputs = {
+              "matrix": json.dumps({"include": packages}),
+              "has_packages": "true" if packages else "false",
+          }
+          print("待打包项目：", [item["name"] for item in packages] or "（无）")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fp:
+              for key, value in outputs.items():
+                  fp.write(f"{key}={value}\n")
+          PY
+
+  build:
+    name: 打包 ${{ matrix.name }}
+    needs: discover
+    if: needs.discover.outputs.has_packages == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ${{ matrix.dir }}/pyproject.toml
+
+      - name: 安装打包工具
+        run: python -m pip install --upgrade pip build twine
+
+      - name: 运行测试
+        run: |
+          set -euo pipefail
+          if [ -d tests ]; then
+            python -m pip install . pytest
+            python -m pytest tests -q
+          else
+            echo "没有 tests/ 目录，跳过测试"
+          fi
+
+      - name: 构建 wheel 与 sdist
+        run: python -m build --outdir dist
+
+      - name: 校验包元数据
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: ${{ matrix.dir }}/dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: 发布 GitHub Release（仅 v* tag）
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 创建 Release 并上传 wheel / sdist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber
+          gh release view "$TAG" --json url -q .url
+
+  # 需要自动发布到 PyPI 时，去掉下面的注释，并在仓库 Settings → Secrets 里添加 PYPI_API_TOKEN。
+  # 也可以改用 PyPI Trusted Publishing：https://docs.pypi.org/trusted-publishers/
+  #
+  # publish-pypi:
+  #   name: 发布到 PyPI（仅 v* tag）
+  #   needs: build
+  #   if: startsWith(github.ref, 'refs/tags/v')
+  #   runs-on: ubuntu-latest
+  #   environment: pypi
+  #   permissions:
+  #     id-token: write
+  #   steps:
+  #     - uses: actions/download-artifact@v4
+  #       with:
+  #         path: dist
+  #         merge-multiple: true
+  #     - uses: pypa/gh-action-pypi-publish@release/v1
+  #       with:
+  #         user: __token__
+  #         password: ${{ secrets.PYPI_API_TOKEN }}

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nonebot-adapter-github-user"
+version = "0.1.0"
+description = "NoneBot2 GitHub 用户账号适配器：以专用 GitHub 账号的网页会话登录并访问 GitHub"
+readme = "README.md"
+requires-python = ">=3.9,<4.0"
+license = "MIT"
+keywords = ["bot", "nonebot", "github", "adapter", "login"]
+classifiers = [
+  "Framework :: Robot Framework",
+  "Framework :: Robot Framework :: Library",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+]
+dependencies = [
+  "nonebot2>=2.2.0,<3",
+  "pydantic>=1.10.0,<3.0.0,!=2.5.0,!=2.5.1",
+  "httpx>=0.24",
+  "typing-extensions>=4.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nonebot*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["F", "E4", "E7", "E9", "B"]
