@@ -1,5 +1,7 @@
 # nonebot-adapter-github-user
 
+[![PyPI version](https://img.shields.io/pypi/v/nonebot-adapter-github-user.svg)](https://pypi.org/project/nonebot-adapter-github-user/) [![Python versions](https://img.shields.io/pypi/pyversions/nonebot-adapter-github-user.svg)](https://pypi.org/project/nonebot-adapter-github-user/)
+
 NoneBot2 的 **GitHub 用户账号适配器**：让机器人以一个**专用的 GitHub 账号**身份登录 GitHub 网页端，并用这个会话去访问 GitHub。
 
 它和官方的 [`nonebot-adapter-github`](https://github.com/nonebot/adapter-github) 不是同一个东西，两者用途不同、互不冲突：
@@ -13,12 +15,20 @@ NoneBot2 的 **GitHub 用户账号适配器**：让机器人以一个**专用的
 
 ## 安装
 
+已发布到 PyPI：<https://pypi.org/project/nonebot-adapter-github-user/>
+
+```bash
+pip install nonebot-adapter-github-user
+```
+
+想改代码时也可以从源码安装：
+
 ```bash
 cd nonebot-adapter-github-user
 pip install .
 ```
 
-说明：适配器代码放在 `nonebot/adapters/github_user/` 里，属于 **命名空间包**。`pip install .` 会把文件合并进已安装的 `nonebot/adapters/` 目录，因此可以直接 `from nonebot.adapters.github_user import Adapter`。
+说明：适配器代码放在 `nonebot/adapters/github_user/` 里，属于 **命名空间包**。两种装法都会把文件合并进已安装的 `nonebot/adapters/` 目录，因此都可以直接 `from nonebot.adapters.github_user import Adapter`。
 
 开发阶段如果不想反复安装，用 `pip install -e .` 会在部分 setuptools 版本上**无法生效**（`nonebot` 是普通包，editable 的命名空间映射挂不进去）。这时在 Bot 入口文件里显式加一行即可（这也是 NoneBot 官方文档推荐的调试方式）：
 
@@ -162,9 +172,11 @@ python -m pytest tests -q
 
 ## 发布到 PyPI
 
+本项目已经发布在 PyPI 上，当前版本 **0.1.0**：<https://pypi.org/project/nonebot-adapter-github-user/>
+
 发布用的是 GitHub 官方模板工作流 `.github/workflows/publish.yml`：**发布（Publish）一个 GitHub Release** 时，通过 PyPI Trusted Publishing（OIDC）把包传上去，全程不需要 token、不需要任何 secret。
 
-首次发布前，在 PyPI 的 [Publishing](https://pypi.org/manage/account/publishing/) 页面添加一个 pending publisher，字段照抄：
+Trusted Publisher 已经在 PyPI 的 [Publishing](https://pypi.org/manage/account/publishing/) 页面配好，字段如下（换个仓库名时要同步改）：
 
 - PyPI Project Name：`nonebot-adapter-github-user`
 - Owner：`rensumo`
