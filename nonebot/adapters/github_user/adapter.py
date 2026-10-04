@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from urllib.parse import urljoin
 
@@ -10,10 +11,12 @@ from typing_extensions import override
 
 from nonebot import get_plugin_config
 from nonebot.adapters import Adapter as BaseAdapter
+from nonebot.drivers import ASGIMixin, HTTPServerSetup, Request, Response, URL
 
-from .bot import Bot
-from .config import Config, GitHubUserAccount
 from .api import GitHubAPI, set_default_api
+from .bot import APIBot, Bot
+from .config import Config, GitHubUserAccount
+from .event import WebhookEvent
 from .exception import (
     ActionFailed,
     DeviceVerificationRequired,
@@ -31,6 +34,13 @@ from .session import (
     NetworkError as SessionNetworkError,
     SessionExpired,
 )
+from .webhook import (
+    SIGNATURE_HEADER,
+    WebhookError,
+    get_header,
+    parse_webhook,
+    verify_signature,
+)
 
 if TYPE_CHECKING:
     from nonebot.drivers import Driver
@@ -47,6 +57,10 @@ class Adapter(BaseAdapter):
         self._sessions: Dict[str, GitHubSession] = {}
         self._api: Optional[GitHubAPI] = None
         self._token_manager: Optional[TokenManager] = None
+        self._api_login: Optional[str] = None
+        self._webhook_bot: Optional[APIBot] = None
+        self._deliveries: "OrderedDict[str, None]" = OrderedDict()
+        self.setup()
         self.driver.on_startup(self.startup)
         self.driver.on_shutdown(self.shutdown)
 
@@ -56,10 +70,127 @@ class Adapter(BaseAdapter):
         return "GitHub-User"
 
     # ------------------------------------------------------------------ #
+    # Webhook 入口                                                        #
+    # ------------------------------------------------------------------ #
+    def setup(self) -> None:
+        """注册 HTTP webhook 路由（需要 ASGI 类型的 driver）。"""
+
+        config = self.github_user_config
+        if not config.github_user_webhook_path:
+            return
+        if not isinstance(self.driver, ASGIMixin):
+            log(
+                "WARNING",
+                "当前 driver 不支持 HTTP 服务端，GitHub webhook 入口未启用；"
+                "请使用 fastapi / aiohttp / quart 等 ASGI driver",
+            )
+            return
+        if not config.webhook_ready():
+            log(
+                "WARNING",
+                "配置了 GITHUB_USER_WEBHOOK_PATH 但没有 secret：入口已注册但会拒绝所有请求。"
+                "请设置 GITHUB_USER_WEBHOOK_SECRET（或明确设置 GITHUB_USER_WEBHOOK_ALLOW_UNSIGNED=true）",
+            )
+        self.setup_http_server(
+            HTTPServerSetup(
+                URL(config.github_user_webhook_path),
+                "POST",
+                "GitHub Webhook",
+                self._handle_webhook,
+            )
+        )
+        log(
+            "INFO",
+            f"GitHub webhook 入口已注册：<y>POST {config.github_user_webhook_path}</y>",
+        )
+
+    async def _handle_webhook(self, request: Request) -> Response:
+        """校验签名 → 解析事件 → 交给 Bot 处理。"""
+
+        config = self.github_user_config
+        body = request.content or b""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+
+        secret = config.github_user_webhook_secret
+        signature = get_header(request.headers, SIGNATURE_HEADER)
+        if not secret:
+            if not config.github_user_webhook_allow_unsigned:
+                log("ERROR", "收到 webhook 但未配置 GITHUB_USER_WEBHOOK_SECRET，已拒绝")
+                return Response(status_code=503, content="webhook secret 未配置")
+        elif not verify_signature(secret, body, signature):
+            log("WARNING", "webhook 签名校验失败，已拒绝")
+            return Response(status_code=401, content="invalid signature")
+
+        try:
+            payload = parse_webhook(request.headers, body)
+        except WebhookError as exc:
+            log("WARNING", f"webhook 解析失败：{exc}")
+            return Response(status_code=400, content=str(exc))
+
+        if payload.event == "ping":
+            log("INFO", f"收到 webhook ping（repo={payload.repository or '-'}）")
+            return Response(status_code=202, content="pong")
+
+        if payload.delivery_id and self._seen_delivery(payload.delivery_id):
+            log("DEBUG", f"重复投递，已忽略：{payload.delivery_id}")
+            return Response(status_code=202, content="duplicate")
+
+        allowed = config.webhook_event_filter()
+        if allowed and payload.event not in allowed:
+            log("DEBUG", f"事件 {payload.event} 不在白名单内，已忽略")
+            return Response(status_code=202, content="ignored")
+
+        bot = self._webhook_bot or next(iter(self.bots.values()), None)
+        if bot is None:
+            log(
+                "WARNING",
+                "收到 webhook 但没有可用的 Bot：配置 GITHUB_USER_TOKEN 或 "
+                "GITHUB_USER_OAUTH_CLIENT_ID 后重启即可处理事件",
+            )
+            return Response(status_code=202, content="no bot")
+
+        event = WebhookEvent(
+            event=payload.event,
+            action=payload.action,
+            delivery_id=payload.delivery_id,
+            repository=payload.repository,
+            sender=payload.sender,
+            payload=payload.data,
+        )
+        log(
+            "INFO",
+            f"收到 webhook <y>{event.get_event_name()}</y> "
+            f"repo={payload.repository or '-'} sender={payload.sender or '-'}",
+        )
+        task = asyncio.create_task(bot.handle_event(event))
+        task.add_done_callback(self._log_task_error)
+        return Response(status_code=202, content="accepted")
+
+    def _seen_delivery(self, delivery_id: str, keep: int = 500) -> bool:
+        """投递去重：近期见过的返回 True。"""
+
+        if delivery_id in self._deliveries:
+            return True
+        self._deliveries[delivery_id] = None
+        while len(self._deliveries) > keep:
+            self._deliveries.popitem(last=False)
+        return False
+
+    @staticmethod
+    def _log_task_error(task: "asyncio.Task[Any]") -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            log("ERROR", f"处理 webhook 事件时出错：{error!r}")
+
+    # ------------------------------------------------------------------ #
     # 生命周期                                                            #
     # ------------------------------------------------------------------ #
     async def startup(self) -> None:
         await self.setup_api()
+        self._register_webhook_bot()
         accounts = self.github_user_config.account_list()
         if not accounts:
             if self._api is None:
@@ -93,6 +224,8 @@ class Adapter(BaseAdapter):
         for session in list(self._sessions.values()):
             await session.aclose()
         self._sessions.clear()
+        self._webhook_bot = None
+        self._deliveries.clear()
         set_default_api(None)
         if self._api is not None:
             await self._api.aclose()
@@ -113,6 +246,21 @@ class Adapter(BaseAdapter):
     @property
     def token_manager(self) -> Optional[TokenManager]:
         return self._token_manager
+
+    def _register_webhook_bot(self) -> Optional[APIBot]:
+        """API 模式下建一个 Bot：webhook 事件交给它，回复即评论。"""
+
+        if self._api is None:
+            return None
+        config = self.github_user_config
+        self_id = config.github_user_webhook_self_id or self._api_login
+        if not self_id:
+            self_id = "github-user"
+        bot = APIBot(self, self._api, self_id=self_id)
+        self._webhook_bot = bot
+        self.bot_connect(bot)
+        log("INFO", f"Webhook Bot 已注册：<y>{bot.self_id}</y>")
+        return bot
 
     def build_token_manager(self) -> Optional[TokenManager]:
         """按配置构造 token 管理器（不联网）。"""
@@ -161,6 +309,7 @@ class Adapter(BaseAdapter):
             )
             return api
         login = user.get("login") if isinstance(user, dict) else None
+        self._api_login = login
         log(
             "INFO",
             f"GitHub API 已就绪，当前身份 <y>{login or '(未知)'}</y>"

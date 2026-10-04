@@ -290,6 +290,63 @@ print(await api.get_authenticated_user())
 - 分支保护照旧生效：保护分支不能直接 push，只能走 PR。
 - 组织仓库可能要求管理员先批准这个 OAuth App，否则 token 对组织仓库无效。
 
+## Webhook 入口：被动响应事件
+
+上面的能力都是"机器人主动干活"；要让它在**别人开 PR / 提 issue / 评论时自动反应**，就把 GitHub 的 webhook 指过来——适配器会注册一个 HTTP 入口，校验签名，把事件转成 NoneBot 事件（`WebhookEvent`，类型为 `notice`），插件用 `on_notice` 就能接住。
+
+### GitHub 侧配置
+
+仓库 → Settings → Webhooks → Add webhook：
+
+- **Payload URL**：`https://你的域名/github/webhook`（路径与 `GITHUB_USER_WEBHOOK_PATH` 一致）
+- **Content type**：`application/json`
+- **Secret**：生成一串强随机字符串，填进 `GITHUB_USER_WEBHOOK_SECRET`
+- **事件**：按需勾选（Pull requests / Issues / Issue comments …）
+
+### 适配器配置
+
+```dotenv
+GITHUB_USER_WEBHOOK_PATH=/github/webhook
+GITHUB_USER_WEBHOOK_SECRET=和GitHub上填的一模一样
+GITHUB_USER_WEBHOOK_EVENTS=                  # 留空=全部；也可写 pull_request,issues
+GITHUB_USER_WEBHOOK_SELF_ID=                 # 可选：Bot 的 self_id，默认用 token 登录名
+GITHUB_USER_WEBHOOK_ALLOW_UNSIGNED=false     # 仅本地调试用，生产别开
+```
+
+两个前提要记住：
+
+- 入口需要 **ASGI driver**（fastapi / aiohttp / quart 等）；用 `none` driver 时只会打警告，不注册路由。
+- 处理事件需要一个可用的 Bot，也就是要开 **API 模式**（配 token 或跑过设备流）；只配网页会话时事件会被忽略并打警告。
+
+### 插件里怎么接
+
+```python
+from nonebot import on_notice
+from nonebot.rule import Rule
+from nonebot.adapters.github_user import WebhookEvent
+
+def is_pr(event: WebhookEvent) -> bool:
+    return event.event == "pull_request"
+
+pr_event = on_notice(rule=Rule(is_pr))
+
+@pr_event.handle()
+async def _(event: WebhookEvent):
+    if event.action != "opened":
+        return
+    # send 会自动把内容评论到对应的 PR / issue / commit 上
+    await pr_event.send(f"感谢 @{event.sender} 的提交，机器人开始检查～")
+```
+
+`WebhookEvent` 上的字段：`event`（如 `pull_request`）、`action`（如 `opened`）、`repository`（`owner/name`）、`sender`（登录名）、`delivery_id`、`payload`（原始 JSON）。
+
+### 行为细节
+
+- **签名校验**：没配 secret 直接 503 拒绝；签名不对返回 401；合法请求返回 202，校验通过后异步处理，不阻塞 GitHub
+- **投递去重**：按 `X-GitHub-Delivery` 记住最近 500 条，重复投递不会重复触发
+- **`ping` 事件**：GitHub 保存 webhook 时会发一次，适配器回 202 并记日志
+- **回复目标推断**：`APIBot.send` 支持 issue / PR / `issue_comment` / `commit_comment`（commit 走提交评论接口）；推断不出来的事件会抛 `ActionFailed`
+
 ## 登录流程说明
 
 `nonebot/adapters/github_user/session.py` 实现了 GitHub 网页端当前的登录行为：

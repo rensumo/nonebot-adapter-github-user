@@ -176,6 +176,40 @@ class Config(BaseModel):
     github_user_api_base_url: str = "https://api.github.com"
     """REST API 地址，企业版自建可改。"""
 
+    # ------------------------------------------------------------------ #
+    # Webhook 入口                                                         #
+    # ------------------------------------------------------------------ #
+    github_user_webhook_path: str = "/github/webhook"
+    """接收 webhook 的路径；留空表示不开启入口。"""
+
+    github_user_webhook_secret: Optional[str] = None
+    """Webhook secret，用于校验 ``X-Hub-Signature-256``。"""
+
+    github_user_webhook_allow_unsigned: bool = False
+    """没配 secret 时是否放行（不安全，只建议本地调试用）。"""
+
+    github_user_webhook_events: str = ""
+    """只处理这些事件（逗号分隔的 ``X-GitHub-Event``），留空表示全部。"""
+
+    github_user_webhook_self_id: Optional[str] = None
+    """Webhook Bot 的 self_id，默认用 token 对应的登录名。"""
+
+    def webhook_event_filter(self) -> List[str]:
+        return [
+            item.strip()
+            for item in (self.github_user_webhook_events or "").split(",")
+            if item.strip()
+        ]
+
+    def webhook_ready(self) -> bool:
+        """入口是否需要注册（有路径，且能校验签名或明确允许不带签名）。"""
+
+        if not self.github_user_webhook_path:
+            return False
+        return bool(self.github_user_webhook_secret) or (
+            self.github_user_webhook_allow_unsigned
+        )
+
     def api_enabled(self) -> bool:
         """是否启用了 API 模式。
 

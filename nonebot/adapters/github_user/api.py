@@ -317,6 +317,15 @@ class GitHubAPI:
             json={"body": body},
         )
 
+    async def comment_commit(self, repo: str, sha: str, body: str) -> Dict[str, Any]:
+        """在某个提交下评论。"""
+
+        return await self.request(
+            "POST",
+            f"/repos/{repo}/commits/{sha}/comments",
+            json={"body": body},
+        )
+
     # 语义化别名，读代码时更直观
     comment_pull_request = comment_issue
 
@@ -428,6 +437,11 @@ class GitHubAPI:
     async def get_branch_sha(self, repo: str, branch: str) -> str:
         data = await self.request("GET", f"/repos/{repo}/git/ref/heads/{branch}")
         return str(data["object"]["sha"])
+
+    async def delete_branch(self, repo: str, branch: str) -> None:
+        """删除分支（清理临时分支用）。"""
+
+        await self.request("DELETE", f"/repos/{repo}/git/refs/heads/{branch}")
 
     async def try_get_branch_sha(self, repo: str, branch: str) -> Optional[str]:
         try:

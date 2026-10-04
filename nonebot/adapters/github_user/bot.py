@@ -9,14 +9,17 @@ from typing_extensions import override
 from nonebot.adapters import Bot as BaseBot
 from nonebot.message import handle_event
 
-from .event import Event
+from .event import Event, WebhookEvent
+from .exception import ActionFailed
 from .message import Message, MessageSegment
 from .session import GitHubSession
+from .webhook import ReplyTarget, WebhookPayload, reply_target
 
 if TYPE_CHECKING:
     import httpx
 
     from .adapter import Adapter
+    from .api import GitHubAPI
 
 
 class Bot(BaseBot):
@@ -76,4 +79,62 @@ class Bot(BaseBot):
         return None
 
 
-__all__ = ["Bot"]
+class APIBot(BaseBot):
+    """用 token 行动的 Bot（API 模式）：webhook 事件交给它处理，回复即评论。
+
+    ``send`` 会根据事件里的仓库与编号自动选择合适的评论接口，
+    因此插件里可以像平常一样 ``await matcher.send("...")``。
+    """
+
+    adapter: "Adapter"
+    api: "GitHubAPI"
+
+    @override
+    def __init__(self, adapter: "Adapter", api: "GitHubAPI", self_id: str) -> None:
+        super().__init__(adapter, self_id)
+        self.api = api
+
+    def __repr__(self) -> str:
+        return f"<APIBot self_id={self.self_id!r} adapter={self.adapter.get_name()!r}>"
+
+    @override
+    async def handle_event(self, event: Event) -> None:
+        await handle_event(self, event)
+
+    @override
+    async def send(
+        self,
+        event: Event,
+        message: Union[str, Message, MessageSegment],
+        **kwargs: Any,
+    ) -> Any:
+        text = message if isinstance(message, str) else str(message)
+        target = self.reply_target(event)
+        if target is None:
+            raise ActionFailed(
+                "无法从该事件推断回复目标；send 只支持 issue / PR / commit 评论类 webhook 事件"
+            )
+        if target.kind == "commit":
+            if not target.sha:
+                raise ActionFailed("commit_comment 事件缺少 commit_id，无法回复")
+            return await self.api.comment_commit(target.repo, target.sha, text)
+        if target.number is None:
+            raise ActionFailed("事件缺少 issue / PR 编号，无法回复")
+        return await self.api.comment_issue(target.repo, target.number, text)
+
+    @staticmethod
+    def reply_target(event: Event) -> Optional[ReplyTarget]:
+        """从事件里推断回复目标（非 webhook 事件返回 None）。"""
+
+        if not isinstance(event, WebhookEvent):
+            return None
+        return reply_target(
+            WebhookPayload(
+                event=event.event,
+                data=event.payload,
+                action=event.action,
+            )
+        )
+
+
+__all__ = ["APIBot", "Bot"]

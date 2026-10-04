@@ -8,10 +8,12 @@ from .api import GitHubAPI as GitHubAPI
 from .api import GitHubAPIError as GitHubAPIError
 from .api import get_github_api as get_github_api
 from .bot import Bot as Bot
+from .bot import APIBot as APIBot
 from .config import Config as Config
 from .config import GitHubUserAccount as GitHubUserAccount
 from .event import Event as Event
 from .event import RawEvent as RawEvent
+from .event import WebhookEvent as WebhookEvent
 from .exception import AccountRestricted as AccountRestricted
 from .exception import ActionFailed as ActionFailed
 from .exception import AuthenticationFailed as AuthenticationFailed
@@ -44,6 +46,14 @@ from .oauth import TokenManager as TokenManager
 from .oauth import TokenSet as TokenSet
 from .oauth import TokenStore as TokenStore
 from .oauth import TokenUnavailable as TokenUnavailable
+from .webhook import ReplyTarget as ReplyTarget
+from .webhook import WebhookError as WebhookError
+from .webhook import WebhookPayload as WebhookPayload
+from .webhook import WebhookSignatureError as WebhookSignatureError
+from .webhook import parse_webhook as parse_webhook
+from .webhook import reply_target as reply_target
+from .webhook import sign_payload as sign_payload
+from .webhook import verify_signature as verify_signature
 from .session import GitHubSession as GitHubSession
 from .session import LoginResult as LoginResult
 from .session import generate_totp as generate_totp
@@ -53,6 +63,7 @@ __all__ = [
     "AccountRestricted",
     "ActionFailed",
     "Adapter",
+    "APIBot",
     "AuthenticationFailed",
     "Bot",
     "CSRFError",
@@ -81,6 +92,7 @@ __all__ = [
     "POP3Mailbox",
     "RateLimited",
     "RawEvent",
+    "ReplyTarget",
     "SessionExpired",
     "TwoFactorRejected",
     "TwoFactorRequired",
@@ -88,6 +100,10 @@ __all__ = [
     "TokenSet",
     "TokenStore",
     "TokenUnavailable",
+    "WebhookError",
+    "WebhookEvent",
+    "WebhookPayload",
+    "WebhookSignatureError",
     "build_mailbox",
     "extract_verification_code",
     "fetch_verification_code",
@@ -95,4 +111,8 @@ __all__ = [
     "get_github_api",
     "make_device_otp_provider",
     "parse_totp_secret",
+    "parse_webhook",
+    "reply_target",
+    "sign_payload",
+    "verify_signature",
 ]

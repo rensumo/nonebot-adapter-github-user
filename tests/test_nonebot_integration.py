@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ if importlib.util.find_spec("nonebot.compat") is None:
 
 import nonebot  # noqa: E402
 import nonebot.adapters  # noqa: E402
+from nonebot.drivers import Request, URL  # noqa: E402
 
 ADAPTER_PARENT = Path(__file__).resolve().parents[1] / "nonebot" / "adapters"
 
@@ -61,17 +63,20 @@ def test_adapter_bot_and_message_smoke(tmp_path):
             github_user_mail_ssl=False,
             github_user_mail_starttls=True,
             github_user_token="ghp_test",
+            github_user_webhook_secret="wh-secret",
         )
 
         _install_legacy_shims()
         get_plugin_config = nonebot.get_plugin_config
         from nonebot.adapters.github_user import (
+            APIBot,
             Adapter,
             Bot,
             Config,
             GitHubSession,
             Message,
             MessageSegment,
+            webhook as webhook_mod,
         )
 
         config = get_plugin_config(Config)
@@ -156,6 +161,85 @@ def test_adapter_bot_and_message_smoke(tmp_path):
             # bot_connect 依赖运行中的事件循环（内部会 create_task）
             adapter.bot_connect(bot)
             assert adapter.bots == {"bot-account": bot}
+
+            # ---- webhook 入口：签名校验 + 事件投递 ----
+            recorded: list = []
+
+            async def _fake_handle(event) -> None:
+                recorded.append(event)
+
+            bot.handle_event = _fake_handle  # type: ignore[method-assign]
+            body = json.dumps(
+                {
+                    "action": "opened",
+                    "number": 3,
+                    "repository": {"full_name": "rensumo/nonebot-adapter-github-user"},
+                    "sender": {"login": "alice"},
+                    "pull_request": {"number": 3},
+                }
+            ).encode()
+            headers = {
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-test-1",
+                "X-Hub-Signature-256": webhook_mod.sign_payload("wh-secret", body),
+            }
+            request = Request(
+                method="POST",
+                url=URL("/github/webhook"),
+                headers=headers,
+                content=body,
+            )
+            response = await adapter._handle_webhook(request)
+            assert response.status_code == 202
+            await asyncio.sleep(0)  # 让 create_task 里的处理跑起来
+            assert len(recorded) == 1
+            assert recorded[0].get_event_name() == "pull_request.opened"
+            assert recorded[0].repository == "rensumo/nonebot-adapter-github-user"
+            assert recorded[0].sender == "alice"
+            target = APIBot.reply_target(recorded[0])
+            assert target is not None and target.number == 3
+
+            # 同一 delivery 重复投递会被忽略
+            duplicate = await adapter._handle_webhook(request)
+            assert duplicate.status_code == 202
+            await asyncio.sleep(0)
+            assert len(recorded) == 1
+
+            # 签名不对 → 401
+            bad = Request(
+                method="POST",
+                url=URL("/github/webhook"),
+                headers={**headers, "X-Hub-Signature-256": "sha256=deadbeef"},
+                content=body,
+            )
+            assert (await adapter._handle_webhook(bad)).status_code == 401
+
+            # 缺事件头 → 400
+            broken = Request(
+                method="POST",
+                url=URL("/github/webhook"),
+                headers={
+                    "X-Hub-Signature-256": webhook_mod.sign_payload("wh-secret", body)
+                },
+                content=body,
+            )
+            assert (await adapter._handle_webhook(broken)).status_code == 400
+
+            # ping → 202
+            ping_body = b"{}"
+            ping = Request(
+                method="POST",
+                url=URL("/github/webhook"),
+                headers={
+                    "X-GitHub-Event": "ping",
+                    "X-Hub-Signature-256": webhook_mod.sign_payload(
+                        "wh-secret", ping_body
+                    ),
+                },
+                content=ping_body,
+            )
+            assert (await adapter._handle_webhook(ping)).status_code == 202
+
             await adapter.shutdown()
 
         loop.run_until_complete(_connect_and_shutdown())

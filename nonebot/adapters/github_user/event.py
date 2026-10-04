@@ -59,4 +59,47 @@ class RawEvent(Event):
         return self.kind
 
 
-__all__ = ["Event", "RawEvent"]
+class WebhookEvent(Event):
+    """GitHub Webhook 事件（由 HTTP 入口投递进来）。"""
+
+    event: str = ""
+    """``X-GitHub-Event``，如 ``pull_request`` / ``issue_comment``。"""
+
+    action: Optional[str] = None
+    """``payload.action``，如 ``opened`` / ``created``。"""
+
+    delivery_id: Optional[str] = None
+    """``X-GitHub-Delivery``，可用于去重。"""
+
+    repository: Optional[str] = None
+    """``owner/name``。"""
+
+    sender: Optional[str] = None
+    """触发者登录名。"""
+
+    payload: Dict[str, Any] = {}
+    """原始 webhook JSON。"""
+
+    @override
+    def get_type(self) -> str:
+        return "notice"
+
+    @override
+    def get_event_name(self) -> str:
+        return f"{self.event}.{self.action}" if self.action else self.event
+
+    @override
+    def get_event_description(self) -> str:
+        return escape_tag(
+            f"{self.get_event_name()} repo={self.repository or '?'} "
+            f"sender={self.sender or '?'}"
+        )
+
+    @override
+    def get_user_id(self) -> str:
+        if not self.sender:
+            raise ValueError("Event has no user_id!")
+        return self.sender
+
+
+__all__ = ["Event", "RawEvent", "WebhookEvent"]
