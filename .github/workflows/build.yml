@@ -122,14 +122,16 @@ jobs:
       # 这里刻意创建「草稿」：真正发布（Publish release）由人在 Releases 页面点，
       # 那一下会触发 publish.yml 用 Trusted Publishing 把包传到 PyPI。
       # （用 GITHUB_TOKEN 建出来的事件不会触发其它工作流，所以不要指望这里直接发布。）
+      # 注意：本 job 没有 checkout，gh 无法从本地 git 目录推断仓库，必须显式带 --repo。
       - name: 创建草稿 Release 并上传 wheel / sdist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -lh dist
-          gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes --draft
-          gh release upload "$TAG" dist/* --clobber
-          gh release view "$TAG" --json url -q .url
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$REPO" --title "$TAG" --generate-notes --draft
+          gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+          gh release view "$TAG" --repo "$REPO" --json url -q .url
