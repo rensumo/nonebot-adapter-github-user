@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-adapter-github-user"
-version = "0.4.0"
-description = "NoneBot2 GitHub 用户账号适配器：以专用 GitHub 账号的网页会话登录并访问 GitHub"
+version = "0.5.0"
+description = "NoneBot2 GitHub 用户账号适配器：用用户 token（PAT / OAuth 设备流）调用 GitHub API 并接收 webhook 事件"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
 license = "MIT"
-keywords = ["bot", "nonebot", "github", "adapter", "login"]
+keywords = ["bot", "nonebot", "github", "adapter", "oauth", "webhook", "pull-request"]
 classifiers = [
   "Framework :: Robot Framework",
   "Framework :: Robot Framework :: Library",

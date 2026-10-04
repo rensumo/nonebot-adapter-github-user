@@ -259,7 +259,7 @@ GITHUB_USER_WEBHOOK_ALLOW_UNSIGNED=false     # 仅本地调试用，生产别开
 两个前提要记住：
 
 - 入口需要 **ASGI driver**（fastapi / aiohttp / quart 等）；用 `none` driver 时只会打警告，不注册路由。
-- 处理事件需要一个可用的 Bot，也就是要开 **API 模式**（配 token 或跑过设备流）；只配网页会话时事件会被忽略并打警告。
+- 处理事件需要一个可用的 Bot，所以必须先配好 token（见上面「二选一」）；没配 token 时事件会被忽略并打警告。
 
 ### 插件里怎么接
 
@@ -313,7 +313,7 @@ async def _(event: WebhookEvent):
 python -m pytest tests -q
 ```
 
-测试分五块：`test_oauth.py`（设备流 / token 刷新）、`test_api.py`（REST 与 GraphQL 载荷、回复分发）、`test_webhook.py`（签名校验、事件解析、回复目标）、`test_mail.py`（IMAP/POP3，用假服务器真跑协议）、`test_login.py`（网页会话，保留兼容）。全部不联网；`tests/test_nonebot_integration.py` 需要已安装 `nonebot2>=2.2`，否则自动跳过。
+测试分四块：`test_oauth.py`（设备流 / token 刷新）、`test_api.py`（REST 与 GraphQL 载荷、回复分发）、`test_webhook.py`（签名校验、事件解析、回复目标）、`test_nonebot_integration.py`（NoneBot 集成与 webhook 投递，需要已安装 `nonebot2>=2.2`，否则自动跳过）。全部不联网。
 
 ## 自动打包（GitHub Actions）
 
@@ -359,9 +359,3 @@ git push origin v0.5.0
 - 想更稳，可以在 Settings → Environments → `pypi` 里加 Required reviewers，发布任务就会停下来等人批准。
 - Workflow name 必须填 `publish.yml`：PyPI 的 Trusted Publisher 是按「仓库 + 工作流文件名 + 环境名」三者一起校验的，填错会 403。
 - 用 `GITHUB_TOKEN` 自动创建 Release 不会触发 publish.yml（GitHub 刻意阻断这种自触发），所以发布那一步必须由人点，或者用**用户 token** 调 `PATCH /repos/{owner}/{repo}/releases/{id}` 把 `draft` 置为 `false`（0.4.0 就是这么发的）。
-
-## 附：旧模式（账号密码网页会话）
-
-0.1.0–0.4.0 期间还有一套「用账号密码登录 GitHub 网页端」的模式（`GitHubSession`），以及配套的「IMAP / POP3 收信自动填设备验证码」（`IMAPMailbox` / `POP3Mailbox`）。因为 GitHub 会对陌生设备和可疑登录弹 CAPTCHA / 设备验证，这套模式不适合长期无人值守运行，所以文档已移除。
-
-代码和测试仍在包里（`session.py` / `mail.py`，配置项是 `GITHUB_USER_LOGIN` / `GITHUB_USER_PASSWORD` / `GITHUB_USER_TOTP_SECRET` / `GITHUB_USER_MAIL_*`），需要时可以直接看对应模块的 docstring；新项目建议一律用上面的 token 方案。

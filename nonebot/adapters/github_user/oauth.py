@@ -10,7 +10,7 @@ access token（8 小时）+ refresh token（6 个月不用才失效），实现�
     tokens = await flow.login(on_code=lambda code: print("去", code.uri, "输入", code.user_code))
     print(tokens.access_token)
 
-本模块与 ``session.py`` / ``mail.py`` 一样不依赖 NoneBot。
+本模块不依赖 NoneBot，可以单独使用。
 """
 
 from __future__ import annotations

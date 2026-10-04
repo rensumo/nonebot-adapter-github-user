@@ -1,7 +1,4 @@
-"""NoneBot 集成冒烟测试：装了 nonebot2 的环境才会真正执行，否则自动跳过。
-
-本地（未安装 NoneBot 的机器）执行时只会看到 skipped，不影响登录流程测试。
-"""
+"""NoneBot 集成冒烟测试：装了 nonebot2 的环境才会真正执行，否则自动跳过。"""
 
 from __future__ import annotations
 
@@ -32,10 +29,7 @@ if str(ADAPTER_PARENT) not in nonebot.adapters.__path__:  # type: ignore[attr-de
 
 
 def _install_legacy_shims() -> None:
-    """为老版本 NoneBot 补上适配器依赖的公共接口。
-
-    适配器声明的最低版本是 nonebot2>=2.2，这里的 shim 只用于让老版本环境也能跑通冒烟测试，不会影响适配器自身的代码。
-    """
+    """为老版本 NoneBot 补上适配器依赖的公共接口（适配器要求 nonebot2>=2.2）。"""
 
     if not hasattr(nonebot, "get_plugin_config"):
 
@@ -45,7 +39,7 @@ def _install_legacy_shims() -> None:
         nonebot.get_plugin_config = _get_plugin_config  # type: ignore[attr-defined]
 
 
-def test_adapter_bot_and_message_smoke(tmp_path):
+def test_adapter_and_webhook_smoke(tmp_path):
     # 部分 NoneBot 版本在初始化时会创建 asyncio.Event()，因此需要先准备好事件循环。
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -53,103 +47,49 @@ def test_adapter_bot_and_message_smoke(tmp_path):
         nonebot.init(
             # 显式写法兼容各版本 NoneBot（"none" 简写在部分版本不可用）
             driver="nonebot.drivers.none:Driver",
-            github_user_login="bot@example.com",
-            github_user_password="pw",
-            github_user_totp_secret="JBSWY3DPEHPK3PXP",
-            github_user_mail_protocol="pop3",
-            github_user_mail_host="pop.example.com",
-            github_user_mail_user="bot@example.com",
-            github_user_mail_password="mail-pw",
-            github_user_mail_ssl=False,
-            github_user_mail_starttls=True,
             github_user_token="ghp_test",
             github_user_webhook_secret="wh-secret",
         )
-
         _install_legacy_shims()
         get_plugin_config = nonebot.get_plugin_config
+
         from nonebot.adapters.github_user import (
-            APIBot,
             Adapter,
             Bot,
             Config,
-            GitHubSession,
+            GitHubAPI,
             Message,
             MessageSegment,
             webhook as webhook_mod,
         )
 
         config = get_plugin_config(Config)
-        accounts = config.account_list()
-        assert len(accounts) == 1
-        assert accounts[0].login == "bot@example.com"
-        assert accounts[0].totp_secret == "JBSWY3DPEHPK3PXP"
-        assert accounts[0].display == "bot@example.com"
-
-        mail = config.mail_config()
-        assert mail is not None
-        assert mail.protocol == "pop3"
-        assert mail.host == "pop.example.com"
-        assert (mail.use_ssl, mail.starttls) == (False, True)
-        assert mail.resolved_port() == 110
-
-        # 没配 host/user/password 时不启用邮箱取码
-        assert Config(github_user_login="a", github_user_password="b").mail_config() is None
-
-        # API 模式：固定 token / client_id / 已存在的 token 文件，满足其一即启用
-        empty_store = tmp_path / "no_token.json"
-        bare = Config(
-            github_user_login="a",
-            github_user_password="b",
-            github_user_token_store=str(empty_store),
+        assert config.github_user_token == "ghp_test"
+        assert config.api_enabled() is True
+        assert config.oauth_scope_list() == ["repo", "workflow"]
+        assert config.webhook_ready() is True
+        assert config.webhook_event_filter() == []
+        # 没配 token / client_id，token 文件也不存在时，API 模式不启用
+        assert (
+            Config(github_user_token_store=str(tmp_path / "nope.json")).api_enabled()
+            is False
         )
-        assert bare.api_enabled() is False
-        with_token = Config(
-            github_user_login="a",
-            github_user_password="b",
-            github_user_token="ghp_x",
-            github_user_token_store=str(empty_store),
+        # 只有 token 文件也算启用（跑过 --oauth-login 后 env 什么都不用写）
+        store = tmp_path / "token.json"
+        store.write_text("{}", encoding="utf-8")
+        assert (
+            Config(github_user_token_store=str(store)).api_enabled() is True
         )
-        assert with_token.api_enabled() is True
-        assert with_token.oauth_scope_list() == ["repo", "workflow"]
-        with_flow = Config(
-            github_user_login="a",
-            github_user_password="b",
-            github_user_oauth_client_id="gh",
-            github_user_token_store=str(empty_store),
-        )
-        assert with_flow.api_enabled() is True
-
-        # 跑过 --oauth-login 之后，只有 token 文件也算启用（env 不用配 token）
-        empty_store.write_text("{}", encoding="utf-8")
-        with_store = Config(
-            github_user_login="a",
-            github_user_password="b",
-            github_user_token_store=str(empty_store),
-        )
-        assert with_store.api_enabled() is True
 
         driver = nonebot.get_driver()
         adapter = Adapter(driver)
         assert Adapter.get_name() == "GitHub-User"
         assert adapter.get_name() == "GitHub-User"
 
-        # 适配器按配置构造 token 管理器（只构造，不联网）
         manager = adapter.build_token_manager()
         assert manager is not None
         assert manager.static_token == "ghp_test"
         assert adapter.api is None  # startup 之前不建客户端
-
-        session = GitHubSession(
-            "bot@example.com", "pw", totp_secret="JBSWY3DPEHPK3PXP"
-        )
-        assert session.login_name == "bot@example.com"
-        assert session.totp_secret == "JBSWY3DPEHPK3PXP"
-        assert session.authenticated is False
-
-        bot = Bot(adapter, session, self_id="bot-account")
-        assert bot.username is None
-        assert "GitHub-User" in repr(bot)
 
         assert str(Message("hello")) == "hello"
         segment = MessageSegment.markdown("**hi**")
@@ -157,12 +97,15 @@ def test_adapter_bot_and_message_smoke(tmp_path):
         assert str(segment) == "**hi**"
         assert Message([segment]) == Message(MessageSegment.markdown("**hi**"))
 
-        async def _connect_and_shutdown() -> None:
-            # bot_connect 依赖运行中的事件循环（内部会 create_task）
-            adapter.bot_connect(bot)
-            assert adapter.bots == {"bot-account": bot}
+        bot = Bot(adapter, GitHubAPI(token="ghp_test"), self_id="rensumo")
+        assert bot.self_id == "rensumo"
+        assert "GitHub-User" in repr(bot)
 
-            # ---- webhook 入口：签名校验 + 事件投递 ----
+        async def _run() -> None:
+            adapter.bot_connect(bot)
+            assert adapter.bots == {"rensumo": bot}
+
+            # ---- webhook 投递：签名校验 + 事件解析 + 回复目标 ----
             recorded: list = []
 
             async def _fake_handle(event) -> None:
@@ -196,7 +139,7 @@ def test_adapter_bot_and_message_smoke(tmp_path):
             assert recorded[0].get_event_name() == "pull_request.opened"
             assert recorded[0].repository == "rensumo/nonebot-adapter-github-user"
             assert recorded[0].sender == "alice"
-            target = APIBot.reply_target(recorded[0])
+            target = Bot.reply_target(recorded[0])
             assert target is not None and target.number == 3
 
             # 同一 delivery 重复投递会被忽略
@@ -242,7 +185,7 @@ def test_adapter_bot_and_message_smoke(tmp_path):
 
             await adapter.shutdown()
 
-        loop.run_until_complete(_connect_and_shutdown())
+        loop.run_until_complete(_run())
         assert adapter.bots == {}
     finally:
         loop.close()
