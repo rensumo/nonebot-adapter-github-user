@@ -2,18 +2,17 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/nonebot-adapter-github-user.svg)](https://pypi.org/project/nonebot-adapter-github-user/) [![Python versions](https://img.shields.io/pypi/pyversions/nonebot-adapter-github-user.svg)](https://pypi.org/project/nonebot-adapter-github-user/)
 
-NoneBot2 的 **GitHub 用户账号适配器**：让机器人以一个**专用的 GitHub 账号**身份登录 GitHub 网页端，并用这个会话去访问 GitHub。
+NoneBot2 的 **GitHub 用户账号适配器**：让机器人以**一个专用 GitHub 账号的身份**干活——用用户 token 走官方 REST / GraphQL API（**开 PR、写评论、提交评审、合并、推分支**），并接收 GitHub **webhook** 事件自动响应。
 
 它和官方的 [`nonebot-adapter-github`](https://github.com/nonebot/adapter-github) 不是同一个东西，两者用途不同、互不冲突：
 
 | | adapter-github（官方） | 本适配器 |
 | --- | --- | --- |
 | 身份 | GitHub App / OAuth App | 一个真实用户账号 |
-| 连接方式 | Webhook 接收事件 + App 私钥鉴权 | 网页表单登录（账号密码 + TOTP 双因素） |
-| 适用场景 | 接收仓库事件、以 App 身份调 REST API | 以「人」的身份访问 GitHub 页面 / 需要用户会话的场景 |
-| 是否接收事件 | 是 | 否（当前只做出站访问） |
-
-除了上面的网页会话，本适配器还支持用 token（PAT / `gh auth token` / OAuth 设备流）走官方 REST API 干活：**开 PR、写评论、提交评审、合并、推分支**，见下文「API 模式」。
+| 鉴权 | App 私钥 / 安装令牌 | 用户 token（PAT / `gh auth token` / OAuth 设备流） |
+| 能力 | 收 webhook 事件 + 以 App 身份调 API | 以用户身份调 API 干活（PR / 评论 / 评审 / 合并 / 推分支）+ 收 webhook 事件 |
+| 典型场景 | 仓库事件机器人 | 需要"以人的身份"操作仓库的自动化 |
+| PR / 评论的作者显示 | `xxx[bot]` | 那个用户账号 |
 
 ## 安装
 
@@ -43,90 +42,6 @@ nonebot.adapters.__path__.append(  # type: ignore[attr-defined]
 )
 ```
 
-## 配置
-
-### 方式一：单账号简写（最小配置）
-
-```dotenv
-GITHUB_USER_LOGIN=bot@example.com
-GITHUB_USER_PASSWORD=your-password
-
-# 账号开启了双因素认证时再填（GitHub 设置页给出的 base32 密钥，或 otpauth:// URI）
-GITHUB_USER_TOTP_SECRET=JBSWY3DPEHPK3PXP
-
-# 可选：会话 Cookie 缓存文件，重启后免密码登录
-GITHUB_USER_COOKIE_STORE=./github_user_session.json
-```
-
-### 方式二：多账号
-
-```dotenv
-GITHUB_USER_ACCOUNTS='[
-  {"login":"bot-a@example.com","password":"pw-a","totp_secret":"AAAAAAAAAAAAAAAA","label":"a"},
-  {"login":"bot-b@example.com","password":"pw-b","label":"b"}
-]'
-```
-
-其它可选配置：
-
-```dotenv
-GITHUB_USER_BASE_URL=https://github.com
-GITHUB_USER_USER_AGENT=Mozilla/5.0 ...
-GITHUB_USER_PROXY=http://127.0.0.1:7890
-GITHUB_USER_TIMEOUT=30
-GITHUB_USER_MAX_RETRIES=2
-GITHUB_USER_TOTP_ATTEMPTS=2
-GITHUB_USER_LOGIN_RETRIES=3
-GITHUB_USER_LOGIN_BACKOFF=5
-```
-
-### 设备验证自动取码（IMAP / POP3）
-
-GitHub 对陌生设备会要求「设备验证」，把验证码发到账号邮箱；机器人点不了邮箱，所以适配器支持直接收信取码。IMAP / POP3 都支持，SSL 与 STARTTLS/STLS 都支持：
-
-```dotenv
-GITHUB_USER_MAIL_PROTOCOL=imap
-GITHUB_USER_MAIL_HOST=imap.qq.com
-GITHUB_USER_MAIL_PORT=993            # 可省略，按协议 + SSL 自动推导（993/143/995/110）
-GITHUB_USER_MAIL_USER=bot@qq.com
-GITHUB_USER_MAIL_PASSWORD=邮箱授权码  # QQ/163 要用「IMAP/POP3 授权码」，不是邮箱登录密码
-GITHUB_USER_MAIL_SSL=true            # 默认 true：直连 TLS（IMAPS/POP3S）
-GITHUB_USER_MAIL_STARTTLS=false      # 关掉 SSL 时可用 STARTTLS/STLS 升级
-GITHUB_USER_MAIL_FOLDER=INBOX        # IMAP 收件目录，POP3 忽略
-GITHUB_USER_MAIL_FROM=github.com     # 只认这个发件人，防误读
-GITHUB_USER_MAIL_SUBJECT=            # 可选：主题关键字
-GITHUB_USER_MAIL_UNSEEN_ONLY=true    # IMAP：只看未读邮件
-GITHUB_USER_MAIL_SEARCH_DAYS=2       # 只扫最近 N 天
-GITHUB_USER_MAIL_MAX_MESSAGES=15     # 最多扫最新多少封
-GITHUB_USER_MAIL_DELETE_AFTER_READ=false
-GITHUB_USER_MAIL_POLL_TIMEOUT=120    # 等验证码邮件的最长秒数
-GITHUB_USER_MAIL_POLL_INTERVAL=5     # 轮询间隔秒数
-```
-
-常用邮箱参数：
-
-| 邮箱 | 协议 | 服务器 | 端口 | 密码栏填什么 |
-| --- | --- | --- | --- | --- |
-| QQ | IMAP | imap.qq.com | 993 | 设置→账号里生成的授权码 |
-| QQ | POP3 | pop.qq.com | 995 | 同上 |
-| 163 | IMAP | imap.163.com | 993 | 客户端授权码 |
-| Gmail | IMAP | imap.gmail.com | 993 | 应用专用密码 |
-
-配好之后，登录流程遇到 `/sessions/verified-device` 会自动轮询邮箱取码，无需再手动接线。
-
-命令行自检同样支持：
-
-```bash
-# 自动从邮箱取码
-python -m nonebot.adapters.github_user \
-  --mail-protocol imap --mail-host imap.qq.com \
-  --mail-user bot@qq.com --mail-password 授权码 \
-  --cookie-store ./github_session.json
-
-# 不用邮箱，手动输入邮件里的验证码
-python -m nonebot.adapters.github_user --ask-device-otp
-```
-
 ## 注册适配器
 
 ```python
@@ -140,48 +55,16 @@ driver.register_adapter(GitHubUserAdapter)
 nonebot.run()
 ```
 
-适配器会在 NoneBot 启动时自动登录所有已配置账号，并注册对应的 Bot（`bot.self_id` 是 GitHub 用户名）。账号名可通过 `Adapter.get_name()` 得到：`"GitHub-User"`。
+适配器名是 `"GitHub-User"`（`Adapter.get_name()`）。配好 token 后，启动时会用它校验身份并注册一个 Bot（`bot.self_id` 是该账号的登录名），webhook 事件就交给这个 Bot 处理。
 
-## 使用
+## 接下来看哪里
 
-```python
-from nonebot import get_bots
-from nonebot.adapters.github_user import Bot
-
-bot: Bot = next(b for b in get_bots().values() if isinstance(b, Bot))
-
-# 站内路径会被补全成 https://github.com/...
-resp = await bot.request("GET", "/notifications")
-
-# 或走 call_api：带 / 的是站内路径，其它视为 api.github.com 的端点
-data = await bot.call_api("/notifications", method="GET")
-
-# 会话失效会自动重新登录一次；也可以手动确认
-username = await bot.get_authenticated_user()
-```
-
-不想用 NoneBot 时，登录流程也可以单独使用：
-
-```python
-from nonebot.adapters.github_user import GitHubSession, generate_totp
-
-session = GitHubSession("bot@example.com", "password", totp_secret="JBSWY3DPEHPK3PXP")
-result = await session.login()
-print(result.username, result.two_factor, session.cookie_dict())
-```
-
-部署前可以先在目标机器上做一次登录自检（只读地验证账号密码 / 双因素，不会打印密码，Cookie 输出已脱敏）：
-
-```bash
-export GITHUB_USER_LOGIN=bot@example.com
-export GITHUB_USER_PASSWORD=your-password
-export GITHUB_USER_TOTP_SECRET=JBSWY3DPEHPK3PXP   # 可选
-python -m nonebot.adapters.github_user
-```
+- 让机器人**主动干活**（开 PR、写评论、评审、合并、推分支）→ 见下面「API 模式」，先按「二选一」把 token 配上。
+- 让机器人**被动响应**（别人开 PR / 提 issue / 评论时自动反应）→ 见「Webhook 入口」。
 
 ## API 模式：自动开 PR / 评论 / 评审
 
-网页会话适合"以人的身份访问页面"；要让机器人**自动干活**（开 PR、写评论、评审、合并），用 token 走 `api.github.com` 更稳——不触发 CAPTCHA / 设备验证，速率限制也明确（5000 次/小时）。
+用 token 走 `api.github.com`：不触发 CAPTCHA / 设备验证，速率限制明确（5000 次/小时），而且 PR、评论的作者就是你这个账号。
 
 ### 二选一：怎么给适配器一个 token
 
@@ -417,24 +300,12 @@ async def _(event: WebhookEvent):
 
 同一个分发也能在客户端直接用：`await api.reply(target, "内容")`，其中 `target` 就是 `reply_target(event)` 的返回值。
 
-## 登录流程说明
-
-`nonebot/adapters/github_user/session.py` 实现了 GitHub 网页端当前的登录行为：
-
-1. `GET /login` 取回 `authenticity_token` 与匿名 Cookie（`_gh_sess`）；
-2. `POST /session` 提交 `login` / `password`；
-3. 令牌过期（HTTP 422）时自动重新取令牌并重试一次；
-4. 账号开启双因素时，GitHub 会 302 到 `/sessions/two-factor`，适配器解析页面上真实的验证码输入框（`app_otp` / `sms_otp` / `otp`），用 `totp_secret` 按 RFC 6238 生成验证码；验证码被拒时会等到下一个 30 秒窗口重试（`GITHUB_USER_TOTP_ATTEMPTS`）；
-5. 若 GitHub 要求设备验证（`/sessions/verified-device`，验证码发到邮箱）：配了上面的邮箱取码就自动完成，否则抛出 `DeviceVerificationRequired`（也可用 `device_otp_provider` 自定义取码来源）；
-6. `GET /` 校验登录态并解析真实用户名；
-7. 会话 Cookie 常驻内存，可选写入 `GITHUB_USER_COOKIE_STORE`（权限 0600）；请求被重定向回 `/login` 时视为会话失效，自动重新登录一次。
-
 ## 已知限制与建议
 
-- **人机验证（CAPTCHA）**：GitHub 对可疑登录会插入 CAPTCHA，适配器只能检测并抛出 `CaptchaRequired`，无法绕过，触发后建议在常用设备/常用 IP 上先正常登录一次。
-- **设备验证**：GitHub 对陌生设备会发邮件验证码，配上「设备验证自动取码」即可无人值守完成；没配的话只能用 `--ask-device-otp` 手动输入。
-- **账号风险**：GitHub 的《Acceptable Use Policies》不鼓励用自动化手段登录账号，频繁失败或异地登录可能触发风控甚至限制账号；请使用**专用机器人账号**，并优先考虑官方推荐的 PAT / OAuth Device Flow / GitHub App 方案，只有在确实需要「用户网页会话」时才使用本适配器。
-- **出站为主**：当前没有实现 GitHub Webhook 接入，因此没有消息事件，`Bot.send()` 会抛出 `NotImplementedError`。
+- **不能批准自己开的 PR**：GitHub 的硬规则（`Can not approve your own pull request`），机器人开的 PR 需要人或 CI 批准；评论、请求修改不受影响。
+- **token 就是身份**：`GITHUB_USER_TOKEN` 或 `github_user_token.json` 泄露等于账号权限被拿走一部分，别提交进仓库（`.gitignore` 已覆盖），并尽量用最小 scope。
+- **gh 的 client_id 是借来的身份**：授权页会显示 "GitHub CLI"，且 GitHub 随时可能收紧；长期使用建议自己注册 OAuth App。
+- 其它限制（分支保护、组织仓库审批、scope 与配额、webhook 前提）见上文「权限与限制」。
 
 ## 测试
 
@@ -442,7 +313,7 @@ async def _(event: WebhookEvent):
 python -m pytest tests -q
 ```
 
-登录流程测试使用 `httpx.MockTransport`，不联网、不需要 NoneBot；`tests/test_nonebot_integration.py` 需要已安装 `nonebot2>=2.2`，否则自动跳过。
+测试分五块：`test_oauth.py`（设备流 / token 刷新）、`test_api.py`（REST 与 GraphQL 载荷、回复分发）、`test_webhook.py`（签名校验、事件解析、回复目标）、`test_mail.py`（IMAP/POP3，用假服务器真跑协议）、`test_login.py`（网页会话，保留兼容）。全部不联网；`tests/test_nonebot_integration.py` 需要已安装 `nonebot2>=2.2`，否则自动跳过。
 
 ## 自动打包（GitHub Actions）
 
@@ -474,10 +345,10 @@ Trusted Publisher 已经在 PyPI 的 [Publishing](https://pypi.org/manage/accoun
 之后每次发版：
 
 ```bash
-# 1. 先把 pyproject.toml 里的 version 改成新版本号（例如 0.1.1）
+# 1. 先把 pyproject.toml 里的 version 改成新版本号（例如 0.5.0）
 # 2. 打 tag 推送：build.yml 会跑测试、构建，并生成一个「草稿」Release
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.5.0
+git push origin v0.5.0
 # 3. 到 Releases 页面核对草稿里的 wheel / sdist，点「Publish release」
 #    这一步才会触发 publish.yml，把包上传到 PyPI
 ```
@@ -487,4 +358,10 @@ git push origin v0.1.1
 - build.yml 生成的是**草稿** Release，不会自动发布；手动点 Publish 就是发版确认动作，因为 PyPI 上传不可逆（同名版本只能 yank，不能覆盖）。
 - 想更稳，可以在 Settings → Environments → `pypi` 里加 Required reviewers，发布任务就会停下来等人批准。
 - Workflow name 必须填 `publish.yml`：PyPI 的 Trusted Publisher 是按「仓库 + 工作流文件名 + 环境名」三者一起校验的，填错会 403。
-- 用 `GITHUB_TOKEN` 自动创建 Release 不会触发 publish.yml（GitHub 刻意阻断这种自触发），所以发布那一步必须由人来点。
+- 用 `GITHUB_TOKEN` 自动创建 Release 不会触发 publish.yml（GitHub 刻意阻断这种自触发），所以发布那一步必须由人点，或者用**用户 token** 调 `PATCH /repos/{owner}/{repo}/releases/{id}` 把 `draft` 置为 `false`（0.4.0 就是这么发的）。
+
+## 附：旧模式（账号密码网页会话）
+
+0.1.0–0.4.0 期间还有一套「用账号密码登录 GitHub 网页端」的模式（`GitHubSession`），以及配套的「IMAP / POP3 收信自动填设备验证码」（`IMAPMailbox` / `POP3Mailbox`）。因为 GitHub 会对陌生设备和可疑登录弹 CAPTCHA / 设备验证，这套模式不适合长期无人值守运行，所以文档已移除。
+
+代码和测试仍在包里（`session.py` / `mail.py`，配置项是 `GITHUB_USER_LOGIN` / `GITHUB_USER_PASSWORD` / `GITHUB_USER_TOTP_SECRET` / `GITHUB_USER_MAIL_*`），需要时可以直接看对应模块的 docstring；新项目建议一律用上面的 token 方案。
