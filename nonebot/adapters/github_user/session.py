@@ -433,6 +433,9 @@ class GitHubSession:
         re.IGNORECASE | re.DOTALL,
     )
     _TAG_RE = re.compile(r"<[^>]+>")
+    _TEMPLATE_RE = re.compile(
+        r"<template\b.*?</template>", re.IGNORECASE | re.DOTALL
+    )
 
     @classmethod
     def _parse_authenticity(cls, html: str) -> Optional[str]:
@@ -454,12 +457,17 @@ class GitHubSession:
 
     @classmethod
     def _extract_flash_errors(cls, html: str) -> List[str]:
+        # GitHub 会在隐藏的 <template> 里放 {{ message }} 之类的占位符，
+        # 不先剥掉就会被当成真实错误文案。
+        html = cls._TEMPLATE_RE.sub(" ", html)
         errors: List[str] = []
         for regex in (cls._FLASH_ALERT_RE, cls._FLASH_ERROR_RE):
             for match in regex.finditer(html):
                 text = _unescape_html(cls._TAG_RE.sub(" ", match.group(1)))
                 text = " ".join(text.split())
-                if text and text not in errors:
+                if not text or "{{" in text or "}}" in text:
+                    continue
+                if text not in errors:
                     errors.append(text)
             if errors:
                 break

@@ -259,6 +259,18 @@ def test_generate_totp_rfc6238_vector():
     )
 
 
+def test_flash_template_placeholder_is_ignored():
+    html = (
+        '<template class="js-flash-template">'
+        '<div class="js-flash-alert">{{ message }}</div></template>'
+        '<div class="flash flash-error">'
+        '<div class="js-flash-alert">Incorrect username or password.</div></div>'
+    )
+    assert session_mod.GitHubSession._extract_flash_errors(html) == [
+        "Incorrect username or password."
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # 登录                                                                         #
 # --------------------------------------------------------------------------- #
