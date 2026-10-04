@@ -162,15 +162,30 @@ python -m pytest tests -q
 
 ## 发布到 PyPI
 
-workflow 里已经带好 `publish-pypi` 任务，走的是 PyPI **Trusted Publishing**（OIDC），不需要 token、也不需要往仓库里塞 secret；代价是要先在两边各配置一次：
+发布用的是 GitHub 官方模板工作流 `.github/workflows/publish.yml`：**发布（Publish）一个 GitHub Release** 时，通过 PyPI Trusted Publishing（OIDC）把包传上去，全程不需要 token、不需要任何 secret。
 
-1. 在 PyPI 的 [Publishing](https://pypi.org/manage/account/publishing/) 页面添加一个 pending publisher，字段照抄：PyPI Project Name 填 `nonebot-adapter-github-user`，Owner 填 `rensumo`，Repository name 填 `nonebot-adapter-github-user`，Workflow name 填 `build.yml`，Environment name 填 `pypi`。
-2. 在这个仓库的 Settings → Secrets and variables → Actions → Variables 里新建一个仓库变量 `PUBLISH_TO_PYPI=true`。
-3. 把 `pyproject.toml` 里的 `version` 改成新版本号，然后推一个 `v*` tag：
+首次发布前，在 PyPI 的 [Publishing](https://pypi.org/manage/account/publishing/) 页面添加一个 pending publisher，字段照抄：
+
+- PyPI Project Name：`nonebot-adapter-github-user`
+- Owner：`rensumo`
+- Repository name：`nonebot-adapter-github-user`
+- Workflow name：`publish.yml`
+- Environment name：`pypi`
+
+之后每次发版：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# 1. 先把 pyproject.toml 里的 version 改成新版本号（例如 0.1.1）
+# 2. 打 tag 推送：build.yml 会跑测试、构建，并生成一个「草稿」Release
+git tag v0.1.1
+git push origin v0.1.1
+# 3. 到 Releases 页面核对草稿里的 wheel / sdist，点「Publish release」
+#    这一步才会触发 publish.yml，把包上传到 PyPI
 ```
 
-这个 tag 会先触发构建与测试，再把 wheel / sdist 传到 PyPI；`PUBLISH_TO_PYPI` 没打开时该任务直接跳过，不会让流水线变红。
+几点说明：
+
+- build.yml 生成的是**草稿** Release，不会自动发布；手动点 Publish 就是发版确认动作，因为 PyPI 上传不可逆（同名版本只能 yank，不能覆盖）。
+- 想更稳，可以在 Settings → Environments → `pypi` 里加 Required reviewers，发布任务就会停下来等人批准。
+- Workflow name 必须填 `publish.yml`：PyPI 的 Trusted Publisher 是按「仓库 + 工作流文件名 + 环境名」三者一起校验的，填错会 403。
+- 用 `GITHUB_TOKEN` 自动创建 Release 不会触发 publish.yml（GitHub 刻意阻断这种自触发），所以发布那一步必须由人来点。
