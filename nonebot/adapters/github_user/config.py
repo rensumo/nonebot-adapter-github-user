@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
@@ -176,9 +177,20 @@ class Config(BaseModel):
     """REST API 地址，企业版自建可改。"""
 
     def api_enabled(self) -> bool:
-        """是否启用了 API 模式（有固定 token 或 client_id）。"""
+        """是否启用了 API 模式。
 
-        return bool(self.github_user_token or self.github_user_oauth_client_id)
+        满足任意一条即可：配了固定 token、配了 client_id，或本地已经有
+        设备流存下来的 token 文件（跑过 ``--oauth-login`` 就不必再写 env）。
+        """
+
+        if self.github_user_token or self.github_user_oauth_client_id:
+            return True
+        try:
+            return bool(self.github_user_token_store) and os.path.exists(
+                self.github_user_token_store
+            )
+        except OSError:
+            return False
 
     def oauth_scope_list(self) -> List[str]:
         return [

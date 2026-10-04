@@ -43,7 +43,7 @@ def _install_legacy_shims() -> None:
         nonebot.get_plugin_config = _get_plugin_config  # type: ignore[attr-defined]
 
 
-def test_adapter_bot_and_message_smoke():
+def test_adapter_bot_and_message_smoke(tmp_path):
     # 部分 NoneBot 版本在初始化时会创建 asyncio.Event()，因此需要先准备好事件循环。
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -91,14 +91,38 @@ def test_adapter_bot_and_message_smoke():
         # 没配 host/user/password 时不启用邮箱取码
         assert Config(github_user_login="a", github_user_password="b").mail_config() is None
 
-        # API 模式：固定 token 或 client_id 都算启用
-        bare = Config(github_user_login="a", github_user_password="b")
+        # API 模式：固定 token / client_id / 已存在的 token 文件，满足其一即启用
+        empty_store = tmp_path / "no_token.json"
+        bare = Config(
+            github_user_login="a",
+            github_user_password="b",
+            github_user_token_store=str(empty_store),
+        )
         assert bare.api_enabled() is False
-        with_token = Config(github_user_login="a", github_user_password="b", github_user_token="ghp_x")
+        with_token = Config(
+            github_user_login="a",
+            github_user_password="b",
+            github_user_token="ghp_x",
+            github_user_token_store=str(empty_store),
+        )
         assert with_token.api_enabled() is True
         assert with_token.oauth_scope_list() == ["repo", "workflow"]
-        with_flow = Config(github_user_login="a", github_user_password="b", github_user_oauth_client_id="gh")
+        with_flow = Config(
+            github_user_login="a",
+            github_user_password="b",
+            github_user_oauth_client_id="gh",
+            github_user_token_store=str(empty_store),
+        )
         assert with_flow.api_enabled() is True
+
+        # 跑过 --oauth-login 之后，只有 token 文件也算启用（env 不用配 token）
+        empty_store.write_text("{}", encoding="utf-8")
+        with_store = Config(
+            github_user_login="a",
+            github_user_password="b",
+            github_user_token_store=str(empty_store),
+        )
+        assert with_store.api_enabled() is True
 
         driver = nonebot.get_driver()
         adapter = Adapter(driver)

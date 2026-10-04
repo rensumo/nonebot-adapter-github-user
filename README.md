@@ -183,47 +183,64 @@ python -m nonebot.adapters.github_user
 
 网页会话适合"以人的身份访问页面"；要让机器人**自动干活**（开 PR、写评论、评审、合并），用 token 走 `api.github.com` 更稳——不触发 CAPTCHA / 设备验证，速率限制也明确（5000 次/小时）。
 
-### 拿到 token
+### 二选一：怎么给适配器一个 token
 
-**方式一：固定 token（最快）**
+| 方式 | 你要做的 | 适合 |
+| --- | --- | --- |
+| **① 在 `.env` 里配 access token** | 自己准备好 token（PAT，或本机 `gh auth token` 的输出）填进 `GITHUB_USER_TOKEN` | 手上已经有 token，想最快跑通 |
+| **② 自行登录（OAuth 设备流）** | 跑一次 `--oauth-login`，浏览器里输一次性代码，token 自动落盘 | 不想手动管 token，一条命令搞定 |
+
+两种**只需选一种**：配了 `GITHUB_USER_TOKEN` 就不会走设备流；反过来，跑过设备流之后适配器会直接读 `github_user_token.json`，`.env` 里什么都不用写。
+
+#### ① 在 `.env` 里配 access token
 
 ```dotenv
-# PAT，或者本机 `gh auth token` 的输出
 GITHUB_USER_TOKEN=ghp_xxxxxxxx
 ```
 
-**方式二：OAuth 设备流（能自动续期，适合长期跑）**
+token 从哪来：
 
-不用自己注册 App 也行——client_id 填 `gh` 表示直接用 GitHub CLI 的公开 client_id（授权页会显示 "GitHub CLI"，那是 GitHub 官方应用的身份，个人自用图省事可以；发布给别人用建议自己注册一个 OAuth App）：
+- 自己的 PAT：GitHub → Settings → Developer settings → Personal access tokens，scope 至少 `repo`（要改 `.github/workflows/` 里的文件再勾 `workflow`）
+- 或者直接复用本机 gh 的登录态：`gh auth token` 把输出粘进去
+
+#### ② 自行登录（OAuth 设备流，一次性）
 
 ```bash
 python -m nonebot.adapters.github_user --oauth-login --oauth-client-id gh
 ```
 
-终端会打印一个一次性代码和 <https://github.com/login/device>，在浏览器里输一次即可；token 存到 `--token-store`（默认 `./github_user_token.json`，写入权限 0600）。如果这个 App 开了 expiring tokens，access token 8 小时过期，适配器会自动用 refresh token 续期。
+终端会打印一个一次性代码和 <https://github.com/login/device>，浏览器里输一次即可。`--oauth-client-id gh` 表示直接用 GitHub CLI 的公开 client_id（授权页会显示 "GitHub CLI"，那是 GitHub 官方应用的身份，个人自用图省事可以；发布给别人用建议自己注册 OAuth App，见下）。
 
-实测提醒：**gh 的 OAuth App 没有开启 expiring tokens**，所以用它拿到的 token 是长期有效的（没有 refresh token，也就没有自动续期这回事）。好处是不用管续期，代价是 token 一旦泄露就一直有效。想要 8 小时自动轮换，就自己注册一个开启 expiring tokens 的 OAuth App，换掉 client_id 即可，代码无需改动。
-
-想用自己的 App：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App（勾上 **Enable Device Flow**），把 client_id 配进来，scope 用默认的 `repo,workflow`。
-
-随时验证 token 能不能用：
+token 会存到 `--token-store`（默认 `./github_user_token.json`，写入权限 0600，已在 `.gitignore` 里）。之后适配器启动会自动读取它，**`.env` 里不需要再配 token**；想确认生效了没：
 
 ```bash
 python -m nonebot.adapters.github_user --check-api
 ```
 
+> **实测提醒**：gh 的 OAuth App 没有开启 expiring tokens，所以用它拿到的 token 是长期有效的（没有 refresh token，也就没有自动续期这回事）。好处是不用管续期，代价是 token 一旦泄露就一直有效。想要 8 小时自动轮换，就自己注册一个开启 expiring tokens 的 OAuth App，换掉 client_id 即可，代码无需改动。
+
+#### 用自己的 OAuth App（可选）
+
+GitHub → Settings → Developer settings → OAuth Apps → New OAuth App，勾上 **Enable Device Flow**，scope 用 `repo,workflow`；然后把 client_id 填给 `--oauth-client-id` 或 `GITHUB_USER_OAUTH_CLIENT_ID`。
+
 ### 配置
 
 ```dotenv
-GITHUB_USER_TOKEN=                  # 方式一填这里；留空则走设备流
-GITHUB_USER_OAUTH_CLIENT_ID=gh      # 方式二：gh 或自己的 client_id
-GITHUB_USER_OAUTH_CLIENT_SECRET=    # 没有就留空
+# 方式①：固定 token（配了它就不会走设备流）
+GITHUB_USER_TOKEN=
+
+# 方式②：OAuth 设备流（跑过 --oauth-login 后，下面这段也可以只留 client_id，
+#          甚至全部留空——只要 ./github_user_token.json 在）
+GITHUB_USER_OAUTH_CLIENT_ID=gh
+GITHUB_USER_OAUTH_CLIENT_SECRET=
 GITHUB_USER_OAUTH_SCOPES=repo,workflow
 GITHUB_USER_TOKEN_STORE=./github_user_token.json
+
+# 企业版自建地址（可选）
 GITHUB_USER_API_BASE_URL=https://api.github.com
 ```
 
-适配器启动时会自动校验 token 并把身份写进日志；插件里用 `get_github_api()` 取到客户端。
+适配器启动时会自动校验 token 并把身份写进日志（token 不可用时只会告警，不会阻断启动）；插件里用 `get_github_api()` 取到客户端。
 
 ### 在插件里用
 
