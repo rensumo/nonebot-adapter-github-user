@@ -202,6 +202,8 @@ python -m nonebot.adapters.github_user --oauth-login --oauth-client-id gh
 
 终端会打印一个一次性代码和 <https://github.com/login/device>，在浏览器里输一次即可；token 存到 `--token-store`（默认 `./github_user_token.json`，写入权限 0600）。如果这个 App 开了 expiring tokens，access token 8 小时过期，适配器会自动用 refresh token 续期。
 
+实测提醒：**gh 的 OAuth App 没有开启 expiring tokens**，所以用它拿到的 token 是长期有效的（没有 refresh token，也就没有自动续期这回事）。好处是不用管续期，代价是 token 一旦泄露就一直有效。想要 8 小时自动轮换，就自己注册一个开启 expiring tokens 的 OAuth App，换掉 client_id 即可，代码无需改动。
+
 想用自己的 App：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App（勾上 **Enable Device Flow**），把 client_id 配进来，scope 用默认的 `repo,workflow`。
 
 随时验证 token 能不能用：

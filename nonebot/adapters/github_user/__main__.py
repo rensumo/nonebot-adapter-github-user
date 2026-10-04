@@ -433,9 +433,10 @@ async def run_check(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     # Windows 控制台常是 GBK，打印邮件主题里的 emoji 会抛 UnicodeEncodeError，
     # 这里把不可编码字符替换掉，保证自检脚本不会因为日志内容崩掉。
+    # line_buffering：把输出重定向到管道/文件时，设备流的一次性代码也要立刻可见。
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+            stream.reconfigure(errors="replace", line_buffering=True)  # type: ignore[union-attr]
         except Exception:  # noqa: BLE001 - 少数环境（如被重定向）不支持就不管
             pass
     args = build_parser().parse_args(argv)
