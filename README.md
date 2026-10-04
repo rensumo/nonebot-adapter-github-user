@@ -279,6 +279,66 @@ api = GitHubAPI(token="ghp_xxxxxxxx")
 print(await api.get_authenticated_user())
 ```
 
+### API 速查表
+
+约定（下面所有方法通用）：
+
+- `repo` 一律是 `"owner/name"` 字符串；`number` 是 issue / PR 编号；`comment_id` 是行内评论 id
+- 返回解析后的 JSON（`dict` / `list`）；出错抛 `GitHubAPIError`，带 `status_code` / `message` / `payload`，另有 `is_not_found` / `is_forbidden` / `is_rate_limited` 三个判断属性
+- 服务端返回 401 时会自动强制刷新 token 再重试一次；其余错误原样抛出
+- 拿客户端：NoneBot 里用 `get_github_api()`，独立使用 `GitHubAPI(token="ghp_xxx")`；用完 `await api.aclose()`（适配器退出时会自动关）
+
+**身份与泛化调用**
+
+| 方法 | 作用 | 接口 |
+| --- | --- | --- |
+| `get_authenticated_user()` | 确认 token 身份 | `GET /user` |
+| `request(method, path, *, params=None, json=None, headers=None, accept=None, raw_text=False)` | 泛化调用，没封装的接口用它 | 任意 |
+| `graphql(query, variables=None)` | 直接发 GraphQL 查询（`errors` 会转成异常） | `POST /graphql` |
+
+**PR**
+
+| 方法 | 作用 | 接口 |
+| --- | --- | --- |
+| `create_pull_request(repo, *, title, head, base, body=None, draft=False, maintainer_can_modify=True)` | 开 PR；`head` 支持 `owner:branch` 跨仓库 | `POST /repos/{repo}/pulls` |
+| `get_pull_request(repo, number)` | 取单个 PR | `GET /repos/{repo}/pulls/{number}` |
+| `list_pull_requests(repo, *, state="open", head=None, base=None, per_page=30)` | 列 PR | `GET /repos/{repo}/pulls` |
+| `update_pull_request(repo, number, **fields)` | 改标题 / 正文 / `state`（`state="closed"` 即关闭） | `PATCH /repos/{repo}/pulls/{number}` |
+| `close_pull_request(repo, number)` | 关闭 PR | `PATCH /repos/{repo}/pulls/{number}` |
+| `get_pull_request_diff(repo, number)` | 取 diff 纯文本 | `GET .../pulls/{number}` + `Accept: application/vnd.github.v3.diff` |
+
+**评论与评审**
+
+| 方法 | 作用 | 接口 |
+| --- | --- | --- |
+| `comment_issue(repo, number, body)` / `comment_pull_request(...)` | issue 或 PR 下的普通评论（同一个方法，两个名字） | `POST /repos/{repo}/issues/{number}/comments` |
+| `comment_pull_request_line(repo, number, body, *, path, line, side="RIGHT", start_line=None, commit_id=None)` | PR 某一行上的行内评论 | `POST /repos/{repo}/pulls/{number}/comments` |
+| `reply_to_review_comment(repo, number, comment_id, body)` | 回复某条行内评论，留在**同一线程** | `POST /repos/{repo}/pulls/{number}/comments/{comment_id}/replies` |
+| `comment_commit(repo, sha, body)` | 提交评论 | `POST /repos/{repo}/commits/{sha}/comments` |
+| `add_discussion_comment(discussion_id, body, *, reply_to_id=None)` | Discussion 评论（Discussions 只有 GraphQL 接口） | GraphQL `addDiscussionComment` |
+| `review_pull_request(repo, number, *, event="COMMENT", body=None, comments=None)` | 提交评审：`APPROVE` / `REQUEST_CHANGES` / `COMMENT`（不能批准自己开的 PR） | `POST /repos/{repo}/pulls/{number}/reviews` |
+| `reply(target, body)` | 按 webhook 事件类型自动挑上面某个接口 | 见上一节「send 走哪个接口」 |
+
+**合并与其它操作**
+
+| 方法 | 作用 | 接口 |
+| --- | --- | --- |
+| `merge_pull_request(repo, number, *, method="merge", commit_title=None, commit_message=None, sha=None)` | 合并 PR：`merge` / `squash` / `rebase` | `PUT /repos/{repo}/pulls/{number}/merge` |
+| `add_labels(repo, number, labels)` | 加标签 | `POST /repos/{repo}/issues/{number}/labels` |
+| `request_reviewers(repo, number, *, reviewers=(), team_reviewers=())` | 请求指定人或团队评审 | `POST /repos/{repo}/pulls/{number}/requested_reviewers` |
+
+**分支与提交（全走 API，不需要本地 git）**
+
+| 方法 | 作用 | 接口 |
+| --- | --- | --- |
+| `get_branch_sha(repo, branch)` | 取分支头 SHA | `GET /repos/{repo}/git/ref/heads/{branch}` |
+| `try_get_branch_sha(repo, branch)` | 同上，分支不存在时返回 `None` | 同上 |
+| `create_branch(repo, branch, *, from_branch=None, from_sha=None)` | 建分支；同名分支已存在就直接返回它 | `POST /repos/{repo}/git/refs` |
+| `delete_branch(repo, branch)` | 删除分支（清理临时分支） | `DELETE /repos/{repo}/git/refs/heads/{branch}` |
+| `get_contents(repo, path, *, ref=None)` | 读文件内容，不存在返回 `None` | `GET /repos/{repo}/contents/{path}` |
+| `commit_files(repo, *, files, message, branch, base_branch=None)` | 提交若干文件（值给 `None` 表示删除该文件）；分支不存在就从 `base_branch` 拉 | Git Data：blobs → trees → commits → refs |
+| `open_pull_request_with_files(repo, *, files, title, branch, base_branch="main", body=None, commit_message=None, draft=False)` | 提交文件 + 开 PR 一把梭 | 上面两者组合 |
+
 ### 权限与限制
 
 | 能力 | 需要的 scope |
