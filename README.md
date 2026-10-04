@@ -160,4 +160,17 @@ python -m pytest tests -q
 
 发布用的版本号取自 `pyproject.toml` 的 `version`，发新版前记得先改。
 
-需要自动发布到 PyPI 时，取消 workflow 末尾 `publish-pypi` 任务的注释，并配置 `PYPI_API_TOKEN`（推荐改用 PyPI Trusted Publishing）。
+## 发布到 PyPI
+
+workflow 里已经带好 `publish-pypi` 任务，走的是 PyPI **Trusted Publishing**（OIDC），不需要 token、也不需要往仓库里塞 secret；代价是要先在两边各配置一次：
+
+1. 在 PyPI 的 [Publishing](https://pypi.org/manage/account/publishing/) 页面添加一个 pending publisher，字段照抄：PyPI Project Name 填 `nonebot-adapter-github-user`，Owner 填 `rensumo`，Repository name 填 `nonebot-adapter-github-user`，Workflow name 填 `build.yml`，Environment name 填 `pypi`。
+2. 在这个仓库的 Settings → Secrets and variables → Actions → Variables 里新建一个仓库变量 `PUBLISH_TO_PYPI=true`。
+3. 把 `pyproject.toml` 里的 `version` 改成新版本号，然后推一个 `v*` tag：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+这个 tag 会先触发构建与测试，再把 wheel / sdist 传到 PyPI；`PUBLISH_TO_PYPI` 没打开时该任务直接跳过，不会让流水线变红。

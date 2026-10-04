@@ -23,6 +23,11 @@ dependencies = [
   "typing-extensions>=4.4",
 ]
 
+[project.urls]
+Homepage = "https://github.com/rensumo/nonebot-adapter-github-user"
+Repository = "https://github.com/rensumo/nonebot-adapter-github-user"
+Issues = "https://github.com/rensumo/nonebot-adapter-github-user/issues"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["nonebot*"]

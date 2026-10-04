@@ -131,23 +131,25 @@ jobs:
           gh release upload "$TAG" dist/* --clobber
           gh release view "$TAG" --json url -q .url
 
-  # 需要自动发布到 PyPI 时，去掉下面的注释，并在仓库 Settings → Secrets 里添加 PYPI_API_TOKEN。
-  # 也可以改用 PyPI Trusted Publishing：https://docs.pypi.org/trusted-publishers/
-  #
-  # publish-pypi:
-  #   name: 发布到 PyPI（仅 v* tag）
-  #   needs: build
-  #   if: startsWith(github.ref, 'refs/tags/v')
-  #   runs-on: ubuntu-latest
-  #   environment: pypi
-  #   permissions:
-  #     id-token: write
-  #   steps:
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         path: dist
-  #         merge-multiple: true
-  #     - uses: pypa/gh-action-pypi-publish@release/v1
-  #       with:
-  #         user: __token__
-  #         password: ${{ secrets.PYPI_API_TOKEN }}
+  # 发布到 PyPI 用的是 Trusted Publishing（OIDC），不需要任何 token 或 secret：
+  #   1. 在 PyPI 上为本仓库添加 Trusted Publisher
+  #      （Owner=rensumo，Repository=nonebot-adapter-github-user，Workflow=build.yml，Environment=pypi）
+  #   2. 在仓库 Settings → Secrets and variables → Actions → Variables 新建 PUBLISH_TO_PYPI=true
+  #   3. 改 pyproject.toml 的 version 后推 v* tag，本任务就会把上一阶段构建的 wheel/sdist 发上去
+  # 开关没打开时任务直接跳过，不会让流水线变红。
+  publish-pypi:
+    name: 发布到 PyPI（仅 v* tag 且开关打开时）
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 通过 Trusted Publishing 发布
+        uses: pypa/gh-action-pypi-publish@release/v1
