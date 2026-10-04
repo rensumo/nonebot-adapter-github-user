@@ -154,6 +154,39 @@ class Config(BaseModel):
     github_user_mail_poll_interval: float = 5.0
     """轮询邮箱的间隔秒数。"""
 
+    # ------------------------------------------------------------------ #
+    # API 模式：PAT（或 gh auth token）/ OAuth 设备流                       #
+    # ------------------------------------------------------------------ #
+    github_user_token: Optional[str] = None
+    """固定 token（PAT 或 ``gh auth token`` 的输出）；配了就不走设备流。"""
+
+    github_user_oauth_client_id: Optional[str] = None
+    """OAuth App 的 client_id；填 ``gh`` 表示用 GitHub CLI 的公开 client_id。"""
+
+    github_user_oauth_client_secret: Optional[str] = None
+    """OAuth App 的 client_secret，没有就留空。"""
+
+    github_user_oauth_scopes: str = "repo,workflow"
+    """设备流申请的 scope，逗号分隔。"""
+
+    github_user_token_store: str = "./github_user_token.json"
+    """设备流 token 的落盘路径（写入时权限 0600）。"""
+
+    github_user_api_base_url: str = "https://api.github.com"
+    """REST API 地址，企业版自建可改。"""
+
+    def api_enabled(self) -> bool:
+        """是否启用了 API 模式（有固定 token 或 client_id）。"""
+
+        return bool(self.github_user_token or self.github_user_oauth_client_id)
+
+    def oauth_scope_list(self) -> List[str]:
+        return [
+            item.strip()
+            for item in (self.github_user_oauth_scopes or "").split(",")
+            if item.strip()
+        ]
+
     def account_list(self) -> List[GitHubUserAccount]:
         """返回最终生效的账号列表（简写配置会转成单元素列表）。"""
 

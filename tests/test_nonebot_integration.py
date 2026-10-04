@@ -60,6 +60,7 @@ def test_adapter_bot_and_message_smoke():
             github_user_mail_password="mail-pw",
             github_user_mail_ssl=False,
             github_user_mail_starttls=True,
+            github_user_token="ghp_test",
         )
 
         _install_legacy_shims()
@@ -90,10 +91,25 @@ def test_adapter_bot_and_message_smoke():
         # 没配 host/user/password 时不启用邮箱取码
         assert Config(github_user_login="a", github_user_password="b").mail_config() is None
 
+        # API 模式：固定 token 或 client_id 都算启用
+        bare = Config(github_user_login="a", github_user_password="b")
+        assert bare.api_enabled() is False
+        with_token = Config(github_user_login="a", github_user_password="b", github_user_token="ghp_x")
+        assert with_token.api_enabled() is True
+        assert with_token.oauth_scope_list() == ["repo", "workflow"]
+        with_flow = Config(github_user_login="a", github_user_password="b", github_user_oauth_client_id="gh")
+        assert with_flow.api_enabled() is True
+
         driver = nonebot.get_driver()
         adapter = Adapter(driver)
         assert Adapter.get_name() == "GitHub-User"
         assert adapter.get_name() == "GitHub-User"
+
+        # 适配器按配置构造 token 管理器（只构造，不联网）
+        manager = adapter.build_token_manager()
+        assert manager is not None
+        assert manager.static_token == "ghp_test"
+        assert adapter.api is None  # startup 之前不建客户端
 
         session = GitHubSession(
             "bot@example.com", "pw", totp_secret="JBSWY3DPEHPK3PXP"

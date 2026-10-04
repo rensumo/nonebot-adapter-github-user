@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-adapter-github-user"
-version = "0.2.0"
+version = "0.3.0"
 description = "NoneBot2 GitHub 用户账号适配器：以专用 GitHub 账号的网页会话登录并访问 GitHub"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"

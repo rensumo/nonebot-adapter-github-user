@@ -13,6 +13,7 @@ from nonebot.adapters import Adapter as BaseAdapter
 
 from .bot import Bot
 from .config import Config, GitHubUserAccount
+from .api import GitHubAPI, set_default_api
 from .exception import (
     ActionFailed,
     DeviceVerificationRequired,
@@ -21,6 +22,7 @@ from .exception import (
 )
 from .log import log
 from .mail import build_mailbox, make_device_otp_provider
+from .oauth import TokenManager, TokenStore, resolve_client_id
 from .session import (
     DEFAULT_USER_AGENT,
     CaptchaRequired,
@@ -43,6 +45,8 @@ class Adapter(BaseAdapter):
         super().__init__(driver, **kwargs)
         self.github_user_config: Config = get_plugin_config(Config)
         self._sessions: Dict[str, GitHubSession] = {}
+        self._api: Optional[GitHubAPI] = None
+        self._token_manager: Optional[TokenManager] = None
         self.driver.on_startup(self.startup)
         self.driver.on_shutdown(self.shutdown)
 
@@ -55,13 +59,16 @@ class Adapter(BaseAdapter):
     # 生命周期                                                            #
     # ------------------------------------------------------------------ #
     async def startup(self) -> None:
+        await self.setup_api()
         accounts = self.github_user_config.account_list()
         if not accounts:
-            log(
-                "WARNING",
-                "未配置 GitHub 账号，适配器不会建立任何会话。"
-                "请设置 GITHUB_USER_LOGIN/GITHUB_USER_PASSWORD 或 GITHUB_USER_ACCOUNTS",
-            )
+            if self._api is None:
+                log(
+                    "WARNING",
+                    "未配置 GitHub 账号，适配器不会建立任何会话。请设置 "
+                    "GITHUB_USER_LOGIN/GITHUB_USER_PASSWORD/GITHUB_USER_ACCOUNTS（网页会话），"
+                    "或 GITHUB_USER_TOKEN / GITHUB_USER_OAUTH_CLIENT_ID（API 模式）",
+                )
             return
 
         results = await asyncio.gather(
@@ -86,6 +93,80 @@ class Adapter(BaseAdapter):
         for session in list(self._sessions.values()):
             await session.aclose()
         self._sessions.clear()
+        set_default_api(None)
+        if self._api is not None:
+            await self._api.aclose()
+            self._api = None
+        if self._token_manager is not None:
+            await self._token_manager.aclose()
+            self._token_manager = None
+
+    # ------------------------------------------------------------------ #
+    # API 模式（PAT / gh auth token / OAuth 设备流）                        #
+    # ------------------------------------------------------------------ #
+    @property
+    def api(self) -> Optional[GitHubAPI]:
+        """API 客户端；配置了 token 或 client_id 时可用。"""
+
+        return self._api
+
+    @property
+    def token_manager(self) -> Optional[TokenManager]:
+        return self._token_manager
+
+    def build_token_manager(self) -> Optional[TokenManager]:
+        """按配置构造 token 管理器（不联网）。"""
+
+        config = self.github_user_config
+        if not config.api_enabled():
+            return None
+        return TokenManager(
+            client_id=resolve_client_id(config.github_user_oauth_client_id),
+            client_secret=config.github_user_oauth_client_secret,
+            scopes=config.oauth_scope_list(),
+            static_token=config.github_user_token,
+            store=TokenStore(config.github_user_token_store),
+            api_base_url=config.github_user_api_base_url,
+            timeout=config.github_user_timeout,
+            proxy=config.github_user_proxy,
+        )
+
+    async def setup_api(self) -> Optional[GitHubAPI]:
+        """构造 API 客户端并校验 token。"""
+
+        manager = self.build_token_manager()
+        if manager is None:
+            return None
+        config = self.github_user_config
+        self._token_manager = manager
+
+        async def provider(force: bool = False) -> str:
+            return await manager.get_token(force=force)
+
+        api = GitHubAPI(
+            token_provider=provider,
+            api_base_url=config.github_user_api_base_url,
+            timeout=config.github_user_timeout,
+            proxy=config.github_user_proxy,
+        )
+        self._api = api
+        set_default_api(api)
+        try:
+            user = await api.get_authenticated_user()
+        except Exception as exc:  # noqa: BLE001 - 未授权时只提示，不阻断启动
+            log(
+                "WARNING",
+                f"GitHub API token 不可用：{exc}；"
+                "可执行 python -m nonebot.adapters.github_user --oauth-login 重新授权",
+            )
+            return api
+        login = user.get("login") if isinstance(user, dict) else None
+        log(
+            "INFO",
+            f"GitHub API 已就绪，当前身份 <y>{login or '(未知)'}</y>"
+            f"（{config.github_user_api_base_url}）",
+        )
+        return api
 
     # ------------------------------------------------------------------ #
     # 账号连接                                                            #

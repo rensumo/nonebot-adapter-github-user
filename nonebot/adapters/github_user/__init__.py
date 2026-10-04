@@ -4,6 +4,9 @@
 """
 
 from .adapter import Adapter as Adapter
+from .api import GitHubAPI as GitHubAPI
+from .api import GitHubAPIError as GitHubAPIError
+from .api import get_github_api as get_github_api
 from .bot import Bot as Bot
 from .config import Config as Config
 from .config import GitHubUserAccount as GitHubUserAccount
@@ -32,6 +35,15 @@ from .mail import fetch_verification_code as fetch_verification_code
 from .mail import make_device_otp_provider as make_device_otp_provider
 from .message import Message as Message
 from .message import MessageSegment as MessageSegment
+from .oauth import DeviceCode as DeviceCode
+from .oauth import DeviceFlowDenied as DeviceFlowDenied
+from .oauth import DeviceFlowExpired as DeviceFlowExpired
+from .oauth import OAuthDeviceFlow as OAuthDeviceFlow
+from .oauth import OAuthError as OAuthError
+from .oauth import TokenManager as TokenManager
+from .oauth import TokenSet as TokenSet
+from .oauth import TokenStore as TokenStore
+from .oauth import TokenUnavailable as TokenUnavailable
 from .session import GitHubSession as GitHubSession
 from .session import LoginResult as LoginResult
 from .session import generate_totp as generate_totp
@@ -47,7 +59,12 @@ __all__ = [
     "CaptchaRequired",
     "Config",
     "DeviceVerificationRequired",
+    "DeviceCode",
+    "DeviceFlowDenied",
+    "DeviceFlowExpired",
     "Event",
+    "GitHubAPI",
+    "GitHubAPIError",
     "GitHubSession",
     "GitHubUserAccount",
     "GitHubUserAdapterException",
@@ -59,16 +76,23 @@ __all__ = [
     "Message",
     "MessageSegment",
     "NetworkError",
+    "OAuthDeviceFlow",
+    "OAuthError",
     "POP3Mailbox",
     "RateLimited",
     "RawEvent",
     "SessionExpired",
     "TwoFactorRejected",
     "TwoFactorRequired",
+    "TokenManager",
+    "TokenSet",
+    "TokenStore",
+    "TokenUnavailable",
     "build_mailbox",
     "extract_verification_code",
     "fetch_verification_code",
     "generate_totp",
+    "get_github_api",
     "make_device_otp_provider",
     "parse_totp_secret",
 ]

@@ -13,6 +13,8 @@ NoneBot2 的 **GitHub 用户账号适配器**：让机器人以一个**专用的
 | 适用场景 | 接收仓库事件、以 App 身份调 REST API | 以「人」的身份访问 GitHub 页面 / 需要用户会话的场景 |
 | 是否接收事件 | 是 | 否（当前只做出站访问） |
 
+除了上面的网页会话，本适配器还支持用 token（PAT / `gh auth token` / OAuth 设备流）走官方 REST API 干活：**开 PR、写评论、提交评审、合并、推分支**，见下文「API 模式」。
+
 ## 安装
 
 已发布到 PyPI：<https://pypi.org/project/nonebot-adapter-github-user/>
@@ -176,6 +178,98 @@ export GITHUB_USER_PASSWORD=your-password
 export GITHUB_USER_TOTP_SECRET=JBSWY3DPEHPK3PXP   # 可选
 python -m nonebot.adapters.github_user
 ```
+
+## API 模式：自动开 PR / 评论 / 评审
+
+网页会话适合"以人的身份访问页面"；要让机器人**自动干活**（开 PR、写评论、评审、合并），用 token 走 `api.github.com` 更稳——不触发 CAPTCHA / 设备验证，速率限制也明确（5000 次/小时）。
+
+### 拿到 token
+
+**方式一：固定 token（最快）**
+
+```dotenv
+# PAT，或者本机 `gh auth token` 的输出
+GITHUB_USER_TOKEN=ghp_xxxxxxxx
+```
+
+**方式二：OAuth 设备流（能自动续期，适合长期跑）**
+
+不用自己注册 App 也行——client_id 填 `gh` 表示直接用 GitHub CLI 的公开 client_id（授权页会显示 "GitHub CLI"，那是 GitHub 官方应用的身份，个人自用图省事可以；发布给别人用建议自己注册一个 OAuth App）：
+
+```bash
+python -m nonebot.adapters.github_user --oauth-login --oauth-client-id gh
+```
+
+终端会打印一个一次性代码和 <https://github.com/login/device>，在浏览器里输一次即可；token 存到 `--token-store`（默认 `./github_user_token.json`，写入权限 0600）。如果这个 App 开了 expiring tokens，access token 8 小时过期，适配器会自动用 refresh token 续期。
+
+想用自己的 App：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App（勾上 **Enable Device Flow**），把 client_id 配进来，scope 用默认的 `repo,workflow`。
+
+随时验证 token 能不能用：
+
+```bash
+python -m nonebot.adapters.github_user --check-api
+```
+
+### 配置
+
+```dotenv
+GITHUB_USER_TOKEN=                  # 方式一填这里；留空则走设备流
+GITHUB_USER_OAUTH_CLIENT_ID=gh      # 方式二：gh 或自己的 client_id
+GITHUB_USER_OAUTH_CLIENT_SECRET=    # 没有就留空
+GITHUB_USER_OAUTH_SCOPES=repo,workflow
+GITHUB_USER_TOKEN_STORE=./github_user_token.json
+GITHUB_USER_API_BASE_URL=https://api.github.com
+```
+
+适配器启动时会自动校验 token 并把身份写进日志；插件里用 `get_github_api()` 取到客户端。
+
+### 在插件里用
+
+```python
+from nonebot.adapters.github_user import get_github_api
+
+api = get_github_api()
+
+# 提交文件 + 开 PR（纯 API，不需要本地 git）
+pr = await api.open_pull_request_with_files(
+    "owner/repo",
+    files={"docs/a.md": "# hello"},
+    title="docs: 新增 a.md",
+    branch="bot/docs-a",
+    base_branch="main",
+    body="由机器人自动创建。",
+)
+
+# 评论、行内评论、评审、合并
+await api.comment_pull_request("owner/repo", pr["number"], "已自动检查 ✅")
+await api.comment_pull_request_line(
+    "owner/repo", pr["number"], "这里建议加个空行", path="docs/a.md", line=3
+)
+await api.review_pull_request(
+    "owner/repo", pr["number"], event="REQUEST_CHANGES", body="请补充说明"
+)
+await api.merge_pull_request("owner/repo", pr["number"], method="squash")
+```
+
+也可以当独立库用（不需要 NoneBot 运行时）：
+
+```python
+from nonebot.adapters.github_user import GitHubAPI
+
+api = GitHubAPI(token="ghp_xxxxxxxx")
+print(await api.get_authenticated_user())
+```
+
+### 权限与限制
+
+| 能力 | 需要的 scope |
+| --- | --- |
+| 开 PR / 评论 / 评审 / 合并 / 推分支 | `repo` |
+| 改 `.github/workflows/` 里的文件 | 再加 `workflow` |
+
+- **不能批准自己开的 PR**：GitHub 会返回 `Can not approve your own pull request`；评论、请求修改都正常。所以标准做法是"机器人开 PR + 人或 CI 批准"。
+- 分支保护照旧生效：保护分支不能直接 push，只能走 PR。
+- 组织仓库可能要求管理员先批准这个 OAuth App，否则 token 对组织仓库无效。
 
 ## 登录流程说明
 
