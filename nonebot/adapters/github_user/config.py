@@ -24,6 +24,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from .compat import field_validator
+from .mail import MailboxConfig
 
 
 class GitHubUserAccount(BaseModel):
@@ -102,6 +103,57 @@ class Config(BaseModel):
     github_user_login_backoff: float = 5.0
     """启动登录重试的基础退避秒数（按次数线性增长）。"""
 
+    # ------------------------------------------------------------------ #
+    # 设备验证自动取码（IMAP / POP3）                                      #
+    # ------------------------------------------------------------------ #
+    github_user_mail_protocol: Optional[str] = None
+    """收信协议：``imap`` 或 ``pop3``；留空表示不启用邮箱取码。"""
+
+    github_user_mail_host: Optional[str] = None
+    """收信服务器地址，如 ``imap.qq.com`` / ``pop.qq.com``。"""
+
+    github_user_mail_port: Optional[int] = None
+    """端口，留空按协议与 SSL 开关推导（993 / 143 / 995 / 110）。"""
+
+    github_user_mail_user: Optional[str] = None
+    """邮箱账号（通常是完整邮箱地址）。"""
+
+    github_user_mail_password: Optional[str] = None
+    """邮箱密码或授权码（QQ/163 等要用 IMAP/POP3 授权码，不是登录密码）。"""
+
+    github_user_mail_ssl: bool = True
+    """True 走 IMAPS/POP3S 直连 TLS；False 时可配 STARTTLS/STLS。"""
+
+    github_user_mail_starttls: bool = False
+    """明文端口上是否升级 TLS（IMAP STARTTLS / POP3 STLS）。"""
+
+    github_user_mail_folder: str = "INBOX"
+    """IMAP 收件目录，POP3 忽略。"""
+
+    github_user_mail_from: str = "github.com"
+    """只处理发件人包含该字符串的邮件，留空表示不过滤。"""
+
+    github_user_mail_subject: str = ""
+    """只处理主题包含该字符串的邮件，留空表示不过滤。"""
+
+    github_user_mail_unseen_only: bool = True
+    """IMAP：只看未读邮件。"""
+
+    github_user_mail_search_days: int = 2
+    """只扫描最近 N 天的邮件。"""
+
+    github_user_mail_max_messages: int = 15
+    """最多扫描最新的多少封邮件。"""
+
+    github_user_mail_delete_after_read: bool = False
+    """取到验证码后是否删除该邮件。"""
+
+    github_user_mail_poll_timeout: float = 120.0
+    """等待验证码邮件的最长秒数。"""
+
+    github_user_mail_poll_interval: float = 5.0
+    """轮询邮箱的间隔秒数。"""
+
     def account_list(self) -> List[GitHubUserAccount]:
         """返回最终生效的账号列表（简写配置会转成单元素列表）。"""
 
@@ -117,3 +169,30 @@ class Config(BaseModel):
                 )
             )
         return accounts
+
+    def mail_config(self) -> Optional[MailboxConfig]:
+        """邮箱取码配置；host / user / password 没配全时返回 None。"""
+
+        if not (
+            self.github_user_mail_host
+            and self.github_user_mail_user
+            and self.github_user_mail_password
+        ):
+            return None
+        return MailboxConfig(
+            host=self.github_user_mail_host,
+            username=self.github_user_mail_user,
+            password=self.github_user_mail_password,
+            protocol=self.github_user_mail_protocol or "imap",
+            port=self.github_user_mail_port,
+            use_ssl=self.github_user_mail_ssl,
+            starttls=self.github_user_mail_starttls,
+            folder=self.github_user_mail_folder,
+            timeout=self.github_user_timeout,
+            search_days=self.github_user_mail_search_days,
+            max_messages=self.github_user_mail_max_messages,
+            unseen_only=self.github_user_mail_unseen_only,
+            from_contains=self.github_user_mail_from,
+            subject_contains=self.github_user_mail_subject,
+            delete_after_read=self.github_user_mail_delete_after_read,
+        )

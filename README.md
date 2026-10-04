@@ -78,6 +78,53 @@ GITHUB_USER_LOGIN_RETRIES=3
 GITHUB_USER_LOGIN_BACKOFF=5
 ```
 
+### 设备验证自动取码（IMAP / POP3）
+
+GitHub 对陌生设备会要求「设备验证」，把验证码发到账号邮箱；机器人点不了邮箱，所以适配器支持直接收信取码。IMAP / POP3 都支持，SSL 与 STARTTLS/STLS 都支持：
+
+```dotenv
+GITHUB_USER_MAIL_PROTOCOL=imap
+GITHUB_USER_MAIL_HOST=imap.qq.com
+GITHUB_USER_MAIL_PORT=993            # 可省略，按协议 + SSL 自动推导（993/143/995/110）
+GITHUB_USER_MAIL_USER=bot@qq.com
+GITHUB_USER_MAIL_PASSWORD=邮箱授权码  # QQ/163 要用「IMAP/POP3 授权码」，不是邮箱登录密码
+GITHUB_USER_MAIL_SSL=true            # 默认 true：直连 TLS（IMAPS/POP3S）
+GITHUB_USER_MAIL_STARTTLS=false      # 关掉 SSL 时可用 STARTTLS/STLS 升级
+GITHUB_USER_MAIL_FOLDER=INBOX        # IMAP 收件目录，POP3 忽略
+GITHUB_USER_MAIL_FROM=github.com     # 只认这个发件人，防误读
+GITHUB_USER_MAIL_SUBJECT=            # 可选：主题关键字
+GITHUB_USER_MAIL_UNSEEN_ONLY=true    # IMAP：只看未读邮件
+GITHUB_USER_MAIL_SEARCH_DAYS=2       # 只扫最近 N 天
+GITHUB_USER_MAIL_MAX_MESSAGES=15     # 最多扫最新多少封
+GITHUB_USER_MAIL_DELETE_AFTER_READ=false
+GITHUB_USER_MAIL_POLL_TIMEOUT=120    # 等验证码邮件的最长秒数
+GITHUB_USER_MAIL_POLL_INTERVAL=5     # 轮询间隔秒数
+```
+
+常用邮箱参数：
+
+| 邮箱 | 协议 | 服务器 | 端口 | 密码栏填什么 |
+| --- | --- | --- | --- | --- |
+| QQ | IMAP | imap.qq.com | 993 | 设置→账号里生成的授权码 |
+| QQ | POP3 | pop.qq.com | 995 | 同上 |
+| 163 | IMAP | imap.163.com | 993 | 客户端授权码 |
+| Gmail | IMAP | imap.gmail.com | 993 | 应用专用密码 |
+
+配好之后，登录流程遇到 `/sessions/verified-device` 会自动轮询邮箱取码，无需再手动接线。
+
+命令行自检同样支持：
+
+```bash
+# 自动从邮箱取码
+python -m nonebot.adapters.github_user \
+  --mail-protocol imap --mail-host imap.qq.com \
+  --mail-user bot@qq.com --mail-password 授权码 \
+  --cookie-store ./github_session.json
+
+# 不用邮箱，手动输入邮件里的验证码
+python -m nonebot.adapters.github_user --ask-device-otp
+```
+
 ## 注册适配器
 
 ```python
@@ -138,14 +185,14 @@ python -m nonebot.adapters.github_user
 2. `POST /session` 提交 `login` / `password`；
 3. 令牌过期（HTTP 422）时自动重新取令牌并重试一次；
 4. 账号开启双因素时，GitHub 会 302 到 `/sessions/two-factor`，适配器解析页面上真实的验证码输入框（`app_otp` / `sms_otp` / `otp`），用 `totp_secret` 按 RFC 6238 生成验证码；验证码被拒时会等到下一个 30 秒窗口重试（`GITHUB_USER_TOTP_ATTEMPTS`）；
-5. 若 GitHub 要求设备验证（`/sessions/verified-device`，验证码发到邮箱），默认抛出 `DeviceVerificationRequired`，可通过 `device_otp_provider` 回调接入邮箱；
+5. 若 GitHub 要求设备验证（`/sessions/verified-device`，验证码发到邮箱）：配了上面的邮箱取码就自动完成，否则抛出 `DeviceVerificationRequired`（也可用 `device_otp_provider` 自定义取码来源）；
 6. `GET /` 校验登录态并解析真实用户名；
 7. 会话 Cookie 常驻内存，可选写入 `GITHUB_USER_COOKIE_STORE`（权限 0600）；请求被重定向回 `/login` 时视为会话失效，自动重新登录一次。
 
 ## 已知限制与建议
 
 - **人机验证（CAPTCHA）**：GitHub 对可疑登录会插入 CAPTCHA，适配器只能检测并抛出 `CaptchaRequired`，无法绕过，触发后建议在常用设备/常用 IP 上先正常登录一次。
-- **设备验证**：邮件验证码必须由邮箱侧提供，否则无法自动完成。
+- **设备验证**：GitHub 对陌生设备会发邮件验证码，配上「设备验证自动取码」即可无人值守完成；没配的话只能用 `--ask-device-otp` 手动输入。
 - **账号风险**：GitHub 的《Acceptable Use Policies》不鼓励用自动化手段登录账号，频繁失败或异地登录可能触发风控甚至限制账号；请使用**专用机器人账号**，并优先考虑官方推荐的 PAT / OAuth Device Flow / GitHub App 方案，只有在确实需要「用户网页会话」时才使用本适配器。
 - **出站为主**：当前没有实现 GitHub Webhook 接入，因此没有消息事件，`Bot.send()` 会抛出 `NotImplementedError`。
 

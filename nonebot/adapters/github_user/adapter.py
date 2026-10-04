@@ -20,6 +20,7 @@ from .exception import (
     NetworkError,
 )
 from .log import log
+from .mail import build_mailbox, make_device_otp_provider
 from .session import (
     DEFAULT_USER_AGENT,
     CaptchaRequired,
@@ -91,10 +92,19 @@ class Adapter(BaseAdapter):
     # ------------------------------------------------------------------ #
     def _build_session(self, account: GitHubUserAccount) -> GitHubSession:
         config = self.github_user_config
+        device_otp_provider = None
+        mail = config.mail_config()
+        if mail is not None:
+            device_otp_provider = make_device_otp_provider(
+                build_mailbox(mail),
+                timeout=config.github_user_mail_poll_timeout,
+                interval=config.github_user_mail_poll_interval,
+            )
         return GitHubSession(
             account.login,
             account.password,
             totp_secret=account.totp_secret,
+            device_otp_provider=device_otp_provider,
             label=account.display,
             base_url=config.github_user_base_url,
             user_agent=config.github_user_user_agent or DEFAULT_USER_AGENT,

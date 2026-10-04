@@ -6,7 +6,11 @@
 
     export GITHUB_USER_LOGIN=bot@example.com
     export GITHUB_USER_PASSWORD=your-password
-    export GITHUB_USER_TOTP_SECRET=JBSWY3DPEHPK3PXP   # 可选
+    export GITHUB_USER_TOTP_SECRET=JBSWY3DPEHPK3PXP      # 可选：开了 TOTP 双因素时
+    export GITHUB_USER_MAIL_PROTOCOL=imap                # 可选：设备验证自动取码
+    export GITHUB_USER_MAIL_HOST=imap.qq.com
+    export GITHUB_USER_MAIL_USER=bot@qq.com
+    export GITHUB_USER_MAIL_PASSWORD=邮箱授权码
     python -m nonebot.adapters.github_user
 """
 
@@ -16,7 +20,14 @@ import argparse
 import asyncio
 import os
 import sys
+from typing import Awaitable, Callable, List, Optional
 
+from .mail import (
+    MailboxConfig,
+    MailboxError,
+    build_mailbox,
+    make_device_otp_provider,
+)
 from .session import (
     DEFAULT_USER_AGENT,
     GitHubSession,
@@ -28,6 +39,71 @@ def _mask(value: str, keep: int = 8) -> str:
     if len(value) <= keep:
         return "*" * len(value)
     return value[:keep] + "..."
+
+
+def _interactive_provider() -> Callable[[], Awaitable[str]]:
+    """让用户在终端里手动输入邮件收到的验证码。"""
+
+    async def provider() -> str:
+        prompt = "请输入 GitHub 发到邮箱的验证码，然后回车："
+        loop = asyncio.get_running_loop()
+        return (await loop.run_in_executor(None, input, prompt)).strip()
+
+    return provider
+
+
+def _chained_provider(
+    providers: List[Callable[[], Awaitable[str]]],
+) -> Callable[[], Awaitable[str]]:
+    """依次尝试多个取码来源，前面的失败就换下一个。"""
+
+    async def provider() -> str:
+        errors: List[str] = []
+        for item in providers:
+            try:
+                return await item()
+            except MailboxError as exc:
+                errors.append(str(exc))
+        raise MailboxError("；".join(errors) or "没有可用的验证码来源")
+
+    return provider
+
+
+def _build_device_otp_provider(
+    args: argparse.Namespace,
+) -> Optional[Callable[[], Awaitable[str]]]:
+    providers: List[Callable[[], Awaitable[str]]] = []
+    if args.mail_host and args.mail_user and args.mail_password:
+        mailbox = build_mailbox(
+            MailboxConfig(
+                host=args.mail_host,
+                username=args.mail_user,
+                password=args.mail_password,
+                protocol=args.mail_protocol or "imap",
+                port=args.mail_port,
+                use_ssl=not args.mail_no_ssl,
+                starttls=args.mail_starttls,
+                folder=args.mail_folder,
+                timeout=args.timeout,
+                from_contains=args.mail_from,
+                subject_contains=args.mail_subject,
+                delete_after_read=args.mail_delete_after_read,
+            )
+        )
+        providers.append(
+            make_device_otp_provider(
+                mailbox,
+                timeout=args.mail_poll_timeout,
+                interval=args.mail_poll_interval,
+            )
+        )
+    if args.ask_device_otp:
+        providers.append(_interactive_provider())
+    if not providers:
+        return None
+    if len(providers) == 1:
+        return providers[0]
+    return _chained_provider(providers)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +150,80 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(os.getenv("GITHUB_USER_TIMEOUT", "30")),
         help="单次请求超时（秒）",
     )
+    parser.add_argument(
+        "--mail-protocol",
+        default=os.getenv("GITHUB_USER_MAIL_PROTOCOL"),
+        choices=["imap", "pop3"],
+        help="设备验证取码用的收信协议，默认读 GITHUB_USER_MAIL_PROTOCOL（imap/pop3）",
+    )
+    parser.add_argument(
+        "--mail-host",
+        default=os.getenv("GITHUB_USER_MAIL_HOST"),
+        help="收信服务器，如 imap.qq.com / pop.qq.com，默认读 GITHUB_USER_MAIL_HOST",
+    )
+    parser.add_argument(
+        "--mail-port",
+        type=int,
+        default=os.getenv("GITHUB_USER_MAIL_PORT"),
+        help="收信端口，默认按协议与 SSL 推导（993/143/995/110）",
+    )
+    parser.add_argument(
+        "--mail-user",
+        default=os.getenv("GITHUB_USER_MAIL_USER"),
+        help="邮箱账号，默认读 GITHUB_USER_MAIL_USER",
+    )
+    parser.add_argument(
+        "--mail-password",
+        default=os.getenv("GITHUB_USER_MAIL_PASSWORD"),
+        help="邮箱密码或授权码，默认读 GITHUB_USER_MAIL_PASSWORD",
+    )
+    parser.add_argument(
+        "--mail-no-ssl",
+        action="store_true",
+        help="不用直连 SSL，改用明文端口（可再配 --mail-starttls）",
+    )
+    parser.add_argument(
+        "--mail-starttls",
+        action="store_true",
+        help="明文端口上升级 TLS（IMAP STARTTLS / POP3 STLS）",
+    )
+    parser.add_argument(
+        "--mail-folder",
+        default=os.getenv("GITHUB_USER_MAIL_FOLDER", "INBOX"),
+        help="IMAP 收件目录，默认 INBOX",
+    )
+    parser.add_argument(
+        "--mail-from",
+        default=os.getenv("GITHUB_USER_MAIL_FROM", "github.com"),
+        help="发件人过滤关键字，默认 github.com",
+    )
+    parser.add_argument(
+        "--mail-subject",
+        default=os.getenv("GITHUB_USER_MAIL_SUBJECT", ""),
+        help="主题过滤关键字，默认不过滤",
+    )
+    parser.add_argument(
+        "--mail-delete-after-read",
+        action="store_true",
+        help="取到验证码后删除该邮件",
+    )
+    parser.add_argument(
+        "--mail-poll-timeout",
+        type=float,
+        default=float(os.getenv("GITHUB_USER_MAIL_POLL_TIMEOUT", "120")),
+        help="等验证码邮件的最长秒数，默认 120",
+    )
+    parser.add_argument(
+        "--mail-poll-interval",
+        type=float,
+        default=float(os.getenv("GITHUB_USER_MAIL_POLL_INTERVAL", "5")),
+        help="轮询邮箱间隔秒数，默认 5",
+    )
+    parser.add_argument(
+        "--ask-device-otp",
+        action="store_true",
+        help="设备验证时在终端手动输入邮箱收到的验证码",
+    )
     return parser
 
 
@@ -86,10 +236,26 @@ async def run_check(args: argparse.Namespace) -> int:
         )
         return 2
 
+    device_otp_provider = _build_device_otp_provider(args)
+    if device_otp_provider is not None:
+        if args.mail_host and not args.ask_device_otp:
+            print(
+                f"设备验证：将从 {args.mail_protocol or 'imap'}://{args.mail_host} "
+                f"自动取码（最长 {args.mail_poll_timeout:g} 秒）"
+            )
+        elif args.mail_host and args.ask_device_otp:
+            print(
+                f"设备验证：先尝试从 {args.mail_host} 自动取码，"
+                f"失败后再提示手动输入"
+            )
+        else:
+            print("设备验证：将提示手动输入邮箱收到的验证码")
+
     session = GitHubSession(
         args.login,
         args.password,
         totp_secret=args.totp,
+        device_otp_provider=device_otp_provider,
         base_url=args.base_url,
         proxy=args.proxy,
         cookie_store=args.cookie_store,

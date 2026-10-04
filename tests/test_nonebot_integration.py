@@ -54,6 +54,12 @@ def test_adapter_bot_and_message_smoke():
             github_user_login="bot@example.com",
             github_user_password="pw",
             github_user_totp_secret="JBSWY3DPEHPK3PXP",
+            github_user_mail_protocol="pop3",
+            github_user_mail_host="pop.example.com",
+            github_user_mail_user="bot@example.com",
+            github_user_mail_password="mail-pw",
+            github_user_mail_ssl=False,
+            github_user_mail_starttls=True,
         )
 
         _install_legacy_shims()
@@ -73,6 +79,16 @@ def test_adapter_bot_and_message_smoke():
         assert accounts[0].login == "bot@example.com"
         assert accounts[0].totp_secret == "JBSWY3DPEHPK3PXP"
         assert accounts[0].display == "bot@example.com"
+
+        mail = config.mail_config()
+        assert mail is not None
+        assert mail.protocol == "pop3"
+        assert mail.host == "pop.example.com"
+        assert (mail.use_ssl, mail.starttls) == (False, True)
+        assert mail.resolved_port() == 110
+
+        # 没配 host/user/password 时不启用邮箱取码
+        assert Config(github_user_login="a", github_user_password="b").mail_config() is None
 
         driver = nonebot.get_driver()
         adapter = Adapter(driver)

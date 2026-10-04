@@ -21,6 +21,15 @@ from .exception import RateLimited as RateLimited
 from .exception import SessionExpired as SessionExpired
 from .exception import TwoFactorRejected as TwoFactorRejected
 from .exception import TwoFactorRequired as TwoFactorRequired
+from .mail import IMAPMailbox as IMAPMailbox
+from .mail import MailboxCodeNotFound as MailboxCodeNotFound
+from .mail import MailboxConfig as MailboxConfig
+from .mail import MailboxError as MailboxError
+from .mail import POP3Mailbox as POP3Mailbox
+from .mail import build_mailbox as build_mailbox
+from .mail import extract_verification_code as extract_verification_code
+from .mail import fetch_verification_code as fetch_verification_code
+from .mail import make_device_otp_provider as make_device_otp_provider
 from .message import Message as Message
 from .message import MessageSegment as MessageSegment
 from .session import GitHubSession as GitHubSession
@@ -42,15 +51,24 @@ __all__ = [
     "GitHubSession",
     "GitHubUserAccount",
     "GitHubUserAdapterException",
+    "IMAPMailbox",
     "LoginResult",
+    "MailboxCodeNotFound",
+    "MailboxConfig",
+    "MailboxError",
     "Message",
     "MessageSegment",
     "NetworkError",
+    "POP3Mailbox",
     "RateLimited",
     "RawEvent",
     "SessionExpired",
     "TwoFactorRejected",
     "TwoFactorRequired",
+    "build_mailbox",
+    "extract_verification_code",
+    "fetch_verification_code",
     "generate_totp",
+    "make_device_otp_provider",
     "parse_totp_secret",
 ]
