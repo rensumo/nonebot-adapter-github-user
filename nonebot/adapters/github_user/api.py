@@ -13,10 +13,23 @@ PAT（``gh auth token``）或 :mod:`oauth` 里的设备流。权限要求：
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+)
 from urllib.parse import quote
 
 import httpx
+
+if TYPE_CHECKING:  # 避免运行时依赖，模块本身可以单独加载
+    from .webhook import ReplyTarget
 
 log = logging.getLogger("nonebot.adapters.github_user")
 
@@ -325,6 +338,103 @@ class GitHubAPI:
             f"/repos/{repo}/commits/{sha}/comments",
             json={"body": body},
         )
+
+    async def reply_to_review_comment(
+        self, repo: str, number: int, comment_id: int, body: str
+    ) -> Dict[str, Any]:
+        """回复 PR 的行内（review）评论，保持在同一线程里。"""
+
+        return await self.request(
+            "POST",
+            f"/repos/{repo}/pulls/{number}/comments/{comment_id}/replies",
+            json={"body": body},
+        )
+
+    async def graphql(
+        self, query: str, variables: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """调用 GitHub GraphQL API（Discussions 等只有 GraphQL 才有的能力）。"""
+
+        payload = await self.request(
+            "POST",
+            "/graphql",
+            json={"query": query, "variables": dict(variables or {})},
+        )
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if errors:
+            message = "; ".join(
+                str(item.get("message", item)) if isinstance(item, dict) else str(item)
+                for item in errors
+            )
+            raise GitHubAPIError(
+                200, f"GraphQL 返回错误：{message}", payload=payload
+            )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    async def add_discussion_comment(
+        self, discussion_id: str, body: str, *, reply_to_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """在 Discussion 下评论（可选回复某条评论）。"""
+
+        query = """
+mutation AddDiscussionComment($discussionId: ID!, $body: String!, $replyToId: ID) {
+  addDiscussionComment(input: {discussionId: $discussionId, body: $body, replyToId: $replyToId}) {
+    comment { id url }
+  }
+}
+"""
+        data = await self.graphql(
+            query,
+            {
+                "discussionId": discussion_id,
+                "body": body,
+                "replyToId": reply_to_id,
+            },
+        )
+        result = data.get("addDiscussionComment")
+        if isinstance(result, dict) and isinstance(result.get("comment"), dict):
+            return result["comment"]
+        return data
+
+    async def reply(self, target: "ReplyTarget", body: str) -> Any:
+        """按事件类型挑对应接口回复（``kind`` 决定走哪个 API）。"""
+
+        kind = getattr(target, "kind", "issue")
+        repo = getattr(target, "repo", None)
+        number = getattr(target, "number", None)
+
+        if kind == "commit":
+            sha = getattr(target, "sha", None)
+            if not sha:
+                raise GitHubAPIError(0, "commit 事件缺少 commit_id，无法回复")
+            return await self.comment_commit(str(repo), str(sha), body)
+
+        if kind == "discussion":
+            node_id = getattr(target, "node_id", None)
+            if not node_id:
+                raise GitHubAPIError(0, "discussion 事件缺少 node_id，无法回复")
+            return await self.add_discussion_comment(
+                str(node_id),
+                body,
+                reply_to_id=getattr(target, "reply_to_node_id", None),
+            )
+
+        if kind == "review_comment":
+            comment_id = getattr(target, "comment_id", None)
+            if number is None or comment_id is None:
+                raise GitHubAPIError(0, "行内评论事件缺少编号，无法回复")
+            try:
+                return await self.reply_to_review_comment(
+                    str(repo), int(number), int(comment_id), body
+                )
+            except GitHubAPIError as exc:
+                # 行内评论可能已被删除 / 所在行已变化，退回普通 PR 评论
+                log.warning("回复行内评论失败（%s），退回普通 PR 评论", exc)
+
+        if number is None:
+            raise GitHubAPIError(0, "事件里没有 issue / PR 编号，无法回复")
+        return await self.comment_issue(str(repo), int(number), body)
 
     # 语义化别名，读代码时更直观
     comment_pull_request = comment_issue

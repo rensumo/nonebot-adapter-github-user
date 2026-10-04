@@ -345,7 +345,17 @@ async def _(event: WebhookEvent):
 - **签名校验**：没配 secret 直接 503 拒绝；签名不对返回 401；合法请求返回 202，校验通过后异步处理，不阻塞 GitHub
 - **投递去重**：按 `X-GitHub-Delivery` 记住最近 500 条，重复投递不会重复触发
 - **`ping` 事件**：GitHub 保存 webhook 时会发一次，适配器回 202 并记日志
-- **回复目标推断**：`APIBot.send` 支持 issue / PR / `issue_comment` / `commit_comment`（commit 走提交评论接口）；推断不出来的事件会抛 `ActionFailed`
+### send 走哪个接口（按事件类型自动挑）
+
+| 事件 | 回复走哪儿 |
+| --- | --- |
+| `issues` / `issue_comment` / `pull_request` / `pull_request_review` | issue 评论：`POST /repos/{repo}/issues/{n}/comments`（PR 也走这个） |
+| `pull_request_review_comment` | 行内评论回复：`POST /repos/{repo}/pulls/{n}/comments/{id}/replies`；失败（评论被删、行号变了）会自动退回普通 PR 评论 |
+| `commit_comment` | 提交评论：`POST /repos/{repo}/commits/{sha}/comments` |
+| `discussion` / `discussion_comment` | GraphQL `addDiscussionComment`；`discussion_comment` 会带 `replyToId` 回到原线程 |
+| 其它（如 `push`） | 不硬猜，直接抛 `ActionFailed` 并说明缺什么 |
+
+同一个分发也能在客户端直接用：`await api.reply(target, "内容")`，其中 `target` 就是 `reply_target(event)` 的返回值。
 
 ## 登录流程说明
 

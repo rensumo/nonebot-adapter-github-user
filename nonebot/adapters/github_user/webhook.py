@@ -142,7 +142,13 @@ class ReplyTarget:
 
     repo: str
     kind: str = "issue"
-    """``issue``（PR 也走 issue 评论接口）或 ``commit``。"""
+    """回复方式，决定用哪个接口：
+
+    - ``issue``：issue / PR 普通评论（``POST /issues/{n}/comments``，PR 也走这个）
+    - ``review_comment``：回复 PR 行内评论（``POST /pulls/{n}/comments/{id}/replies``）
+    - ``commit``：提交评论（``POST /commits/{sha}/comments``）
+    - ``discussion``：Discussion 评论（GraphQL ``addDiscussionComment``）
+    """
 
     number: Optional[int] = None
     """issue / PR 编号。"""
@@ -150,12 +156,37 @@ class ReplyTarget:
     sha: Optional[str] = None
     """commit 评论时的提交 SHA。"""
 
+    comment_id: Optional[int] = None
+    """``review_comment`` 时被回复的行内评论 id。"""
+
+    node_id: Optional[str] = None
+    """``discussion`` 时 Discussion 的 GraphQL node id。"""
+
+    reply_to_node_id: Optional[str] = None
+    """``discussion`` 时要回复的那条评论的 node id。"""
+
+
+def _issue_number(data: Mapping[str, Any]) -> Optional[int]:
+    for key in ("issue", "pull_request"):
+        item = data.get(key)
+        if isinstance(item, dict) and isinstance(item.get("number"), int):
+            return int(item["number"])
+    return None
+
+
+def _dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
 
 def reply_target(payload: WebhookPayload) -> Optional[ReplyTarget]:
     """从事件里推断回复目标；推断不出来返回 None。
 
-    覆盖 issue / PR 相关事件（走 issue 评论接口）和 commit_comment
-    （走 commit 评论接口）。
+    按事件类型挑对应的接口：
+
+    - issue / PR 相关事件 → issue 评论接口
+    - ``pull_request_review_comment`` → 行内评论的回复接口
+    - ``commit_comment`` → 提交评论接口
+    - ``discussion`` / ``discussion_comment`` → GraphQL 的 Discussion 评论
     """
 
     data = payload.data
@@ -163,20 +194,41 @@ def reply_target(payload: WebhookPayload) -> Optional[ReplyTarget]:
     repo = repository.get("full_name") if isinstance(repository, dict) else None
     if not repo:
         return None
+    repo = str(repo)
+    comment = _dict(data.get("comment"))
 
     if payload.event == "commit_comment":
-        comment = data.get("comment")
-        sha = comment.get("commit_id") if isinstance(comment, dict) else None
-        return ReplyTarget(repo=str(repo), kind="commit", sha=sha) if sha else None
+        sha = comment.get("commit_id")
+        return ReplyTarget(repo=repo, kind="commit", sha=sha) if sha else None
 
-    for key in ("issue", "pull_request"):
-        item = data.get(key)
-        if not isinstance(item, dict):
-            continue
-        number = item.get("number")
-        if isinstance(number, int):
-            return ReplyTarget(repo=str(repo), number=number)
+    if payload.event == "pull_request_review_comment":
+        number = _issue_number(data)
+        comment_id = comment.get("id")
+        if number is not None and isinstance(comment_id, int):
+            return ReplyTarget(
+                repo=repo,
+                kind="review_comment",
+                number=number,
+                comment_id=comment_id,
+            )
+        # 拿不到行内评论 id 就退回普通 PR 评论
 
-    # review_comment 这类事件会带 pull_request，上面已覆盖；
-    # discussion 等需要 GraphQL，这里不处理。
+    if payload.event in ("discussion", "discussion_comment"):
+        discussion = _dict(data.get("discussion"))
+        node_id = discussion.get("node_id")
+        if node_id:
+            return ReplyTarget(
+                repo=repo,
+                kind="discussion",
+                node_id=str(node_id),
+                reply_to_node_id=(
+                    str(comment["node_id"])
+                    if payload.event == "discussion_comment" and comment.get("node_id")
+                    else None
+                ),
+            )
+
+    number = _issue_number(data)
+    if number is not None:
+        return ReplyTarget(repo=repo, number=number)
     return None

@@ -159,3 +159,84 @@ def test_reply_target_returns_none_when_unknown():
     no_repo = json.dumps({"action": "created"}).encode()
     payload2 = hook.parse_webhook(make_headers(no_repo, event="issues"), no_repo)
     assert hook.reply_target(payload2) is None
+
+
+def test_reply_target_for_review_comment():
+    body = json.dumps(
+        {
+            "action": "created",
+            "pull_request": {"number": 5},
+            "comment": {"id": 998877, "node_id": "PRRC_1", "path": "a.py", "line": 3},
+            "repository": {"full_name": "rensumo/demo"},
+        }
+    ).encode()
+    payload = hook.parse_webhook(
+        make_headers(body, event="pull_request_review_comment"), body
+    )
+    target = hook.reply_target(payload)
+    assert target is not None
+    assert (target.kind, target.repo, target.number, target.comment_id) == (
+        "review_comment",
+        "rensumo/demo",
+        5,
+        998877,
+    )
+
+
+def test_reply_target_falls_back_when_review_comment_id_missing():
+    body = json.dumps(
+        {
+            "action": "created",
+            "pull_request": {"number": 5},
+            "comment": {"path": "a.py"},
+            "repository": {"full_name": "rensumo/demo"},
+        }
+    ).encode()
+    payload = hook.parse_webhook(
+        make_headers(body, event="pull_request_review_comment"), body
+    )
+    target = hook.reply_target(payload)
+    assert target is not None
+    assert target.kind == "issue" and target.number == 5
+
+
+def test_reply_target_for_discussion():
+    body = json.dumps(
+        {
+            "action": "created",
+            "discussion": {"number": 4, "node_id": "D_kwDO123"},
+            "repository": {"full_name": "rensumo/demo"},
+        }
+    ).encode()
+    payload = hook.parse_webhook(make_headers(body, event="discussion"), body)
+    target = hook.reply_target(payload)
+    assert target is not None
+    assert (target.kind, target.node_id, target.reply_to_node_id) == (
+        "discussion",
+        "D_kwDO123",
+        None,
+    )
+
+    comment_body = json.dumps(
+        {
+            "action": "created",
+            "discussion": {"number": 4, "node_id": "D_kwDO123"},
+            "comment": {"node_id": "DC_kwDO456"},
+            "repository": {"full_name": "rensumo/demo"},
+        }
+    ).encode()
+    comment_payload = hook.parse_webhook(
+        make_headers(comment_body, event="discussion_comment"), comment_body
+    )
+    comment_target = hook.reply_target(comment_payload)
+    assert comment_target is not None
+    assert comment_target.kind == "discussion"
+    assert comment_target.reply_to_node_id == "DC_kwDO456"
+
+
+def test_reply_target_for_discussion_without_node_id():
+    body = json.dumps(
+        {"discussion": {"number": 4}, "repository": {"full_name": "rensumo/demo"}}
+    ).encode()
+    payload = hook.parse_webhook(make_headers(body, event="discussion"), body)
+    assert hook.reply_target(payload) is None

@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -402,6 +403,128 @@ def test_get_contents_returns_none_on_404():
         recorder = Recorder({})
         api = make_api(recorder)
         assert await api.get_contents("o/r", "nope.txt") is None
+        await api.aclose()
+
+    asyncio.run(main())
+
+
+# --------------------------------------------------------------------------- #
+# 按事件类型挑接口回复                                                          #
+# --------------------------------------------------------------------------- #
+def _target(**kwargs: Any) -> Any:
+    defaults = {
+        "repo": "o/r",
+        "kind": "issue",
+        "number": None,
+        "sha": None,
+        "comment_id": None,
+        "node_id": None,
+        "reply_to_node_id": None,
+    }
+    defaults.update(kwargs)
+    return types.SimpleNamespace(**defaults)
+
+
+def test_reply_dispatches_by_kind():
+    async def main() -> None:
+        recorder = Recorder(
+            {
+                ("POST", "/repos/o/r/issues/3/comments"): (201, {"id": 1}),
+                ("POST", "/repos/o/r/commits/abc123/comments"): (201, {"id": 2}),
+                ("POST", "/repos/o/r/pulls/5/comments/998877/replies"): (
+                    201,
+                    {"id": 3},
+                ),
+            }
+        )
+        api = make_api(recorder)
+
+        await api.reply(_target(number=3), "issue 回复")
+        await api.reply(_target(kind="commit", sha="abc123"), "提交回复")
+        await api.reply(
+            _target(kind="review_comment", number=5, comment_id=998877), "行内回复"
+        )
+        await api.aclose()
+
+        paths = [(method, path) for method, path, _ in recorder.calls]
+        assert paths == [
+            ("POST", "/repos/o/r/issues/3/comments"),
+            ("POST", "/repos/o/r/commits/abc123/comments"),
+            ("POST", "/repos/o/r/pulls/5/comments/998877/replies"),
+        ]
+        assert recorder.calls[2][2] == {"body": "行内回复"}
+
+    asyncio.run(main())
+
+
+def test_reply_review_comment_falls_back_to_issue_comment():
+    async def main() -> None:
+        recorder = Recorder(
+            {("POST", "/repos/o/r/issues/5/comments"): (201, {"id": 9})}
+        )
+        api = make_api(recorder)
+        result = await api.reply(
+            _target(kind="review_comment", number=5, comment_id=1), "退回普通评论"
+        )
+        await api.aclose()
+        # 回复接口没有配置 → 404 → 自动退回 issue 评论
+        assert result == {"id": 9}
+        assert recorder.calls[-1][1] == "/repos/o/r/issues/5/comments"
+
+    asyncio.run(main())
+
+
+def test_reply_discussion_uses_graphql():
+    async def main() -> None:
+        seen: Dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "addDiscussionComment": {
+                            "comment": {"id": "DC_1", "url": "u"}
+                        }
+                    }
+                },
+            )
+
+        api = GitHubAPI(token="t", transport=httpx.MockTransport(handler))
+        result = await api.reply(
+            _target(kind="discussion", node_id="D_1", reply_to_node_id="DC_0"),
+            "讨论回复",
+        )
+        await api.aclose()
+
+        assert seen["path"] == "/graphql"
+        assert "addDiscussionComment" in seen["body"]["query"]
+        assert seen["body"]["variables"] == {
+            "discussionId": "D_1",
+            "body": "讨论回复",
+            "replyToId": "DC_0",
+        }
+        assert result == {"id": "DC_1", "url": "u"}
+
+    asyncio.run(main())
+
+
+def test_graphql_errors_are_raised():
+    async def main() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, json={"errors": [{"message": "Could not resolve to a node"}]}
+            )
+
+        api = GitHubAPI(token="t", transport=httpx.MockTransport(handler))
+        try:
+            await api.graphql("query { viewer { login } }")
+        except GitHubAPIError as exc:
+            assert "Could not resolve to a node" in exc.message
+        else:  # pragma: no cover - 失败路径
+            raise AssertionError("应当抛出 GitHubAPIError")
         await api.aclose()
 
     asyncio.run(main())

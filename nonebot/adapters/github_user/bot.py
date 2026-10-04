@@ -112,15 +112,10 @@ class APIBot(BaseBot):
         target = self.reply_target(event)
         if target is None:
             raise ActionFailed(
-                "无法从该事件推断回复目标；send 只支持 issue / PR / commit 评论类 webhook 事件"
+                "无法从该事件推断回复目标；send 支持 issue / PR / 行内评论 / commit / "
+                "discussion 这几类 webhook 事件"
             )
-        if target.kind == "commit":
-            if not target.sha:
-                raise ActionFailed("commit_comment 事件缺少 commit_id，无法回复")
-            return await self.api.comment_commit(target.repo, target.sha, text)
-        if target.number is None:
-            raise ActionFailed("事件缺少 issue / PR 编号，无法回复")
-        return await self.api.comment_issue(target.repo, target.number, text)
+        return await self.api.reply(target, text)
 
     @staticmethod
     def reply_target(event: Event) -> Optional[ReplyTarget]:
